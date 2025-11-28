@@ -1,0 +1,101 @@
+trigger:
+- main
+- develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  dockerRegistryServiceConnection: 'your-docker-registry-connection'
+  imageRepository: 'wise-banco-material'
+  containerRegistry: 'your-registry.azurecr.io'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: Build
+  displayName: Build and Test
+  jobs:
+  - job: Build
+    displayName: Build
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '18.x'
+      displayName: 'Install Node.js'
+
+    - task: SonarCloudPrepare@1
+      displayName: 'Prepare SonarCloud analysis'
+      inputs:
+        SonarCloud: 'SonarCloud'
+        organization: 'your-organization'
+        scannerMode: 'CLI'
+        configMode: 'manual'
+        cliProjectKey: 'wise-banco-material'
+        cliProjectName: 'Wise Banco Material'
+        cliSources: 'src'
+        extraProperties: |
+          sonar.javascript.lcov.reportPaths=coverage/lcov.info
+          sonar.testExecutionReportPaths=test-results/sonar-report.xml
+
+    - script: |
+        npm ci
+        npm run lint
+        npm run test:cov
+        npm run build
+      displayName: 'Install dependencies, lint, test and build'
+
+    - task: SonarCloudAnalyze@1
+      displayName: 'Run SonarCloud analysis'
+
+    - task: SonarCloudPublish@1
+      displayName: 'Publish SonarCloud results'
+      inputs:
+        pollingTimeoutSec: '300'
+
+- stage: Docker
+  displayName: Build and Push Docker Image
+  dependsOn: Build
+  jobs:
+  - job: Docker
+    displayName: Docker
+    steps:
+    - task: Docker@2
+      displayName: Build and push image
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+          latest
+
+- stage: Deploy
+  displayName: Deploy to Azure
+  dependsOn: Docker
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureContainerInstances@0
+            displayName: 'Deploy to Azure Container Instances'
+            inputs:
+              azureSubscription: 'your-azure-subscription'
+              resourceGroupName: 'wise-banco-material-rg'
+              location: 'East US'
+              imageSource: 'Container Registry'
+              azureContainerRegistry: '$(containerRegistry)'
+              repositoryName: '$(imageRepository)'
+              tag: '$(tag)'
+              containerName: 'wise-banco-material'
+              ports: '3000'
+              environmentVariables: |
+                NODE_ENV production
+                PORT 3000
+                DB_CONNECTION_STRING $(DB_CONNECTION_STRING)
