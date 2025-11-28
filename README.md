@@ -153,7 +153,7 @@ src/
 ```
 
 ## Funcionalidades Principales
-- ✅ Carga de materiales (PDF, Word, imágenes, videos)
+- ✅ Carga de materiales (PDF)
 - ✅ Organización por curso, docente, semestre
 - ✅ Filtros de búsqueda avanzada
 - ✅ Sistema de calificación y popularidad
@@ -214,3 +214,36 @@ Por el momento, configurar la variable `DB_CONNECTION_STRING` en el archivo `.en
 
 ## Soporte
 Para soporte técnico o preguntas sobre el proyecto, contactar al equipo de desarrollo.
+
+## 📝 Convenciones de Commits
+
+Este proyecto sigue [Conventional Commits](https://www.conventionalcommits.org/) para mantener un historial claro y consistente.
+
+### Formato Básico
+
+```
+<tipo>(<alcance>): <descripción>
+```
+
+### Tipos Principales
+
+- `feat` - Nueva funcionalidad
+- `fix` - Corrección de bug
+- `docs` - Cambios en documentación
+- `style` - Cambios de formato
+- `refactor` - Refactorización de código
+- `test` - Añadir o modificar tests
+- `chore` - Tareas de mantenimiento
+
+
+## 📄 Licencia
+
+Este proyecto es privado y pertenece a DOSW2025.
+
+---
+
+## 👥 Equipo
+
+**DOSW2025** - Desarrollo de Aplicaciones Web
+
+---
