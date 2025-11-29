@@ -4,7 +4,7 @@ import { IaListenerModule } from './simula-ia/ia-listener.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [MaterialModule,IaListenerModule,PrismaModule],
+  imports: [MaterialModule, IaListenerModule, PrismaModule],
   controllers: [],
   providers: [],
 })
