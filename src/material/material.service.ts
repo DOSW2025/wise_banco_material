@@ -7,6 +7,8 @@ import { NotificationDto } from 'src/material/dto/notificacion.dto';
 import { v4 as uuid } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
+import { MaterialListItemDto } from './dto/material-list-item.dto';
+import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 
 @Injectable()
 export class MaterialService {
@@ -244,4 +246,104 @@ export class MaterialService {
 
     await this.notification.sendMessages(Message);
   }
+
+    /**
+   * Obtiene los materiales de un usuario y calcula estadísticas básicas:
+   * - totalVistas
+   * - totalDescargas
+   * - calificacionPromedio global (sobre todas las calificaciones de sus materiales).
+   */
+  async getMaterialsByUserWithStats(userId: string): Promise<UserMaterialsResponseDto> {
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        tags: { include: { Tags: true } },
+        calificaciones: true,
+      },
+    });
+
+    const materialsDto = materiales.map((m: any) => this.toMaterialListItemDto(m));
+
+    // Estadísticas básicas
+    const totalVistas = materiales.reduce(
+      (acc: number, m: any) => acc + (m.vistos ?? 0),
+      0,
+    );
+
+    const totalDescargas = materiales.reduce(
+      (acc: number, m: any) => acc + (m.descargas ?? 0),
+      0,
+    );
+
+    // Calificación global: promedio sobre todas las calificaciones de todos los materiales del usuario
+    const todasLasCalificaciones = materiales.flatMap(
+      (m: any) => m.calificaciones ?? [],
+    );
+
+    const calificacionPromedio =
+      todasLasCalificaciones.length > 0
+        ? todasLasCalificaciones.reduce(
+            (acc: number, c: any) => acc + c.calificacion,
+            0,
+          ) / todasLasCalificaciones.length
+        : null;
+
+    return {
+      materials: materialsDto,
+      totalVistas,
+      totalDescargas,
+      calificacionPromedio,
+    };
+  }
+
+  /**
+   * Obtiene los materiales más populares en el sistema,
+   * ordenados por descargas y, en segundo lugar, por vistas.
+   */
+  async getPopularMaterials(limit = 10): Promise<MaterialListItemDto[]> {
+    const materiales = await this.prisma.materiales.findMany({
+      orderBy: [
+        { descargas: 'desc' },
+        { vistos: 'desc' },
+        { createdAt: 'desc' },
+      ],
+      take: limit,
+      include: {
+        tags: { include: { Tags: true } },
+        calificaciones: true,
+      },
+    });
+
+    return materiales.map((m: any) => this.toMaterialListItemDto(m));
+  }
+
+  /**
+   * Mapea el modelo de Prisma al DTO de salida para listas.
+   */
+  private toMaterialListItemDto(material: any): MaterialListItemDto {
+    const promedio =
+      material.calificaciones && material.calificaciones.length > 0
+        ? material.calificaciones.reduce(
+            (acc: number, c: any) => acc + c.calificacion,
+            0,
+          ) / material.calificaciones.length
+        : undefined;
+
+    return {
+      id: material.id,
+      nombre: material.nombre,
+      userId: material.userId,
+      url: material.url, // <- URL del blob que se guardó al momento de subir
+      descripcion: material.descripcion,
+      vistos: material.vistos,
+      descargas: material.descargas,
+      createdAt: material.createdAt,
+      updatedAt: material.updatedAt,
+      tags: material.tags?.map((t: any) => t.Tags?.tag) ?? [],
+      calificacionPromedio: promedio,
+    };
+  }
+
+
 }
