@@ -1,6 +1,5 @@
 jest.mock('../config', () => ({
   envs: {
-    // Cadena FALSA pero con formato válido de Azure
     blobStorageConnectionString:
       'DefaultEndpointsProtocol=https;AccountName=fakeaccount;AccountKey=fakeKey1234567890==;EndpointSuffix=core.windows.net',
     blobStorageAccountName: 'fakeaccount',
@@ -28,7 +27,6 @@ describe('MaterialService - estadísticas de materiales', () => {
       },
     };
 
-    // Mock mínimo ServiceBusClient 
     serviceBusClientMock = {
       createSender: jest.fn().mockReturnValue({
         sendMessages: jest.fn(),
@@ -38,7 +36,6 @@ describe('MaterialService - estadísticas de materiales', () => {
       }),
     };
 
-    // Instanciamos directamente el servicio, sin Nest TestingModule
     service = new MaterialService(
       serviceBusClientMock as any,
       prismaMock as any,
@@ -102,7 +99,7 @@ describe('MaterialService - estadísticas de materiales', () => {
       expect(result.materials[0].id).toBe('mat-1');
       expect(result.materials[0].url).toBe('https://blob/guia.pdf');
       expect(result.materials[0].tags).toEqual(['cálculo', 'parcial']);
-      expect(result.materials[0].calificacionPromedio).toBe(4.5); // (4+5)/2
+      expect(result.materials[0].calificacionPromedio).toBe(4.5); 
 
       // Estadísticas globales
       expect(result.totalVistas).toBe(10 + 5);
