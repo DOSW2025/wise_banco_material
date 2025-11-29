@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
 import { MaterialListItemDto } from './dto/material-list-item.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
+import { MaterialStatsDto } from './dto/material-stats.dto';
 
 @Injectable()
 export class MaterialService {
@@ -247,7 +248,7 @@ export class MaterialService {
     await this.notification.sendMessages(Message);
   }
 
-    /**
+  /**
    * Obtiene los materiales de un usuario y calcula estadísticas básicas:
    * totalVistas
    * totalDescargas
@@ -319,6 +320,51 @@ export class MaterialService {
   }
 
   /**
+   * Obtiene las estadísticas de un material específico:
+   * - descargas
+   * - vistos
+   * - calificación promedio
+   * - total de comentarios
+   * - tags
+   */
+  async getMaterialStats(materialId: string): Promise<MaterialStatsDto> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+      include: {
+        tags: { include: { Tags: true } },
+        calificaciones: true,
+      },
+    });
+
+    if (!material) {
+      throw new BadRequestException(`Material con id ${materialId} no encontrado`);
+    }
+
+    const calificacionPromedio =
+      material.calificaciones && material.calificaciones.length > 0
+        ? material.calificaciones.reduce(
+            (acc: number, c: any) => acc + c.calificacion,
+            0,
+          ) / material.calificaciones.length
+        : undefined;
+
+    const totalComentarios = material.calificaciones?.filter(
+      (c: any) => c.comentario,
+    ).length ?? 0;
+
+    return {
+      id: material.id,
+      nombre: material.nombre,
+      descargas: material.descargas,
+      vistos: material.vistos,
+      calificacionPromedio,
+      totalComentarios,
+      createdAt: material.createdAt,
+      tags: material.tags?.map((t: any) => t.Tags?.tag) ?? [],
+    };
+  }
+
+  /**
    * Mapea el modelo de Prisma al DTO de salida para listas.
    */
   private toMaterialListItemDto(material: any): MaterialListItemDto {
@@ -344,6 +390,5 @@ export class MaterialService {
       calificacionPromedio: promedio,
     };
   }
-
 
 }

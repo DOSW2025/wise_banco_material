@@ -1,4 +1,4 @@
-import { Controller, Post, UploadedFile, UseInterceptors, BadRequestException, Body, Logger} from '@nestjs/common';
+import { Controller, Post, UploadedFile, UseInterceptors, BadRequestException, Body, Logger, Res } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,12 +7,18 @@ import { ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { MaterialListItemDto } from './dto/material-list-item.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { MaterialStatsDto } from './dto/material-stats.dto';
+import { PdfExportService } from './pdf-export.service';
+import { Response } from 'express';
 
 
 @Controller('material')
 export class MaterialController {
   private readonly logger = new Logger(MaterialController.name);
-  constructor(private readonly materialService: MaterialService,private prisma: PrismaService) {}
+  constructor(
+    private readonly materialService: MaterialService,
+    private readonly pdfExportService: PdfExportService,
+    private prisma: PrismaService
+  ) {}
 
   @Post()
   @UseInterceptors(FileInterceptor('file'))
@@ -118,10 +124,28 @@ export class MaterialController {
     status: 200,
     description: 'PDF generado exitosamente.',
   })
-  async exportMaterialStatsToPDF(@Param('id') id: string) {
+  async exportMaterialStatsToPDF(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    this.logger.log(`Solicitando exportación PDF para material: ${id}`);
     
+    // Obtener estadísticas del material
     const stats = await this.materialService.getMaterialStats(id);
-    return { message: 'Exportación PDF pendiente de implementar', stats };
+    
+    // Generar PDF
+    const pdfBuffer = await this.pdfExportService.generateMaterialStatsPDF(stats);
+    
+    // Configurar headers para descarga
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="estadisticas-${stats.id}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdfBuffer.length);
+    
+    // Enviar el PDF
+    res.send(pdfBuffer);
   }
 
 
