@@ -97,7 +97,13 @@ export class MaterialService {
     } catch (err: any) {
       // Detectar colisión por unique constraint en Prisma (código P2002)
       if (err.code === 'P2002') {
-        //Logica de duplicados aca
+        // Buscar el material existente por hash y lanzar una excepción de conflicto
+        const existingMaterial = await this.prisma.materiales.findUnique({
+          where: { hash },
+        });
+        throw new ConflictException(
+          `Este archivo ya existe en el sistema (ID: ${existingMaterial?.id})`
+        );
       } else {
         this.logger.error('Error creando registro provisional:', err);
         throw new BadRequestException('Error al crear registro de material');
