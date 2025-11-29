@@ -1,7 +1,7 @@
 import { Controller, Post, UploadedFile, UseInterceptors, BadRequestException, Body, Logger} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { Get, Param } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { MaterialListItemDto } from './dto/material-list-item.dto';

@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { ServiceBusClient, ServiceBusMessage } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
-import { envs } from 'src/config';
+import { envs } from '../config';
 import { RespuestaIADto } from './dto/respuestIA.dto';
 import { NotificationDto } from 'src/material/dto/notificacion.dto';
 import { v4 as uuid } from 'uuid';
