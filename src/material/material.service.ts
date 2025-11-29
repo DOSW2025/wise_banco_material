@@ -98,6 +98,9 @@ export class MaterialService {
       // Detectar colisión por unique constraint en Prisma (código P2002)
       if (err.code === 'P2002') {
         //Logica de duplicados aca
+      } else {
+        this.logger.error('Error creando registro provisional:', err);
+        throw new BadRequestException('Error al crear registro de material');
       }
     }
 
