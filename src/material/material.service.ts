@@ -123,6 +123,7 @@ export class MaterialService {
     } catch (err: any) {
       // Detectar colisión por unique constraint en Prisma (código P2002)
       if (err.code === 'P2002') {
+        this.logger.warn(`Duplicate file detected (hash=${hash})`);
         throw new ConflictException('Este archivo ya existe en el sistema');
       } else {
         this.logger.error('Error creando registro provisional:', err);
