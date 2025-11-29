@@ -249,9 +249,9 @@ export class MaterialService {
 
     /**
    * Obtiene los materiales de un usuario y calcula estadísticas básicas:
-   * - totalVistas
-   * - totalDescargas
-   * - calificacionPromedio global (sobre todas las calificaciones de sus materiales).
+   * totalVistas
+   * totalDescargas
+   * calificacionPromedio global (sobre todas las calificaciones de sus materiales).
    */
   async getMaterialsByUserWithStats(userId: string): Promise<UserMaterialsResponseDto> {
     const materiales = await this.prisma.materiales.findMany({
@@ -334,7 +334,7 @@ export class MaterialService {
       id: material.id,
       nombre: material.nombre,
       userId: material.userId,
-      url: material.url, // <- URL del blob que se guardó al momento de subir
+      url: material.url, 
       descripcion: material.descripcion,
       vistos: material.vistos,
       descargas: material.descargas,
