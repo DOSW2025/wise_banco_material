@@ -246,4 +246,8 @@ Este proyecto es privado y pertenece a DOSW2025.
 
 **DOSW2025** - Desarrollo de Aplicaciones Web
 
+<<<<<<< HEAD
 ---
+=======
+---
+>>>>>>> daf8df33dbd73188c4de9974bc029572f6737613

@@ -4,7 +4,68 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Calificaciones {
+  id           Int        @id @default(autoincrement())
+  idMaterial   String
+  calificacion Int
+  comentario   String?
+  createdAt    DateTime   @default(now())
+  Materiales   Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+}
+
+model MaterialTags {
+  idTag      Int
+  idMaterial String
+  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  Tags       Tags       @relation(fields: [idTag], references: [id], onDelete: Cascade)
+
+  @@id([idTag, idMaterial])
+  @@index([idMaterial])
+}
+
+model Materiales {
+  id             String           @id
+  nombre         String
+  userId         String
+  url            String
+  descripcion    String?
+  vistos         Int              @default(0)
+  descargas      Int              @default(0)
+  createdAt      DateTime         @default(now())
+  hash           String?          @unique
+  updatedAt      DateTime
+  Calificaciones Calificaciones[]
+  MaterialTags   MaterialTags[]
+  usuarios       usuarios         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Resumen        Resumen[]
+}
+
+model Resumen {
+  id         Int        @id @default(autoincrement())
+  idMaterial String
+  resumen    String
+  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+}
+
+model Tags {
+  id           Int            @id @default(autoincrement())
+  tag          String         @unique
+  MaterialTags MaterialTags[]
+}
+
+model estados_usuario {
+  id          Int        @id @default(autoincrement())
+  nombre      String     @unique
+  descripcion String?
+  activo      Boolean    @default(true)
+  created_at  DateTime   @default(now())
+  updated_at  DateTime
+  usuarios    usuarios[]
 }
 
 model materia {
@@ -25,7 +86,7 @@ model notifications {
   asunto        String
   resumen       String
   visto         Boolean  @default(false)
-  usuarios      Usuario  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usuarios      usuarios @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([id, userId])
 }
@@ -38,9 +99,19 @@ model rating {
   score         Int
   comment       String?
   createdAt     DateTime      @default(now())
-  usuarios      Usuario       @relation(fields: [raterId], references: [id])
+  usuarios      usuarios      @relation(fields: [raterId], references: [id])
   tutoria       tutoria       @relation(fields: [sessionId], references: [id_tutoria], onDelete: Cascade)
   tutor_profile tutor_profile @relation(fields: [tutorId], references: [id_tutor])
+}
+
+model roles {
+  id          Int        @id @default(autoincrement())
+  nombre      String     @unique
+  descripcion String?
+  activo      Boolean    @default(true)
+  created_at  DateTime   @default(now())
+  updated_at  DateTime
+  usuarios    usuarios[]
 }
 
 model tema {
@@ -68,7 +139,7 @@ model tutor_profile {
   reputacion    Float           @default(0)
   rating        rating[]
   tutor_materia tutor_materia[]
-  usuarios      Usuario         @relation(fields: [id_tutor], references: [id], onDelete: Cascade)
+  usuarios      usuarios        @relation(fields: [id_tutor], references: [id], onDelete: Cascade)
 }
 
 model tutoria {
@@ -89,8 +160,8 @@ model tutoria {
   createdAt                            DateTime     @default(now())
   rating                               rating?
   materia                              materia      @relation(fields: [materiaId], references: [id])
-  usuarios_tutoria_studentIdTousuarios Usuario      @relation("tutoria_studentIdTousuarios", fields: [studentId], references: [id])
-  usuarios_tutoria_tutorIdTousuarios   Usuario      @relation("tutoria_tutorIdTousuarios", fields: [tutorId], references: [id])
+  usuarios_tutoria_studentIdTousuarios usuarios     @relation("tutoria_studentIdTousuarios", fields: [studentId], references: [id])
+  usuarios_tutoria_tutorIdTousuarios   usuarios     @relation("tutoria_tutorIdTousuarios", fields: [tutorId], references: [id])
 
   @@index([codigoMateria])
   @@index([materiaId])
@@ -98,103 +169,34 @@ model tutoria {
   @@index([tutorId, scheduledAt])
 }
 
-model materiales {
-  id             String           @id
-  nombre         String
-  userId         String
-  url            String
-  descripcion    String?
-  vistos         Int              @default(0)
-  descargas      Int              @default(0)
-  createdAt      DateTime         @default(now())
-  hash           String?          @unique
-  updatedAt      DateTime         @updatedAt
-  calificaciones Calificaciones[]
-  tags           MaterialTags[]
-  usuarios       Usuario          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  resumens       resumen[]
-}
-
-model Tags {
-  id         Int            @id @default(autoincrement())
-  tag        String         @unique
-  materiales MaterialTags[]
-}
-
-model MaterialTags {
-  idTag      Int
-  idMaterial String
-  materiales materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
-  Tags       Tags       @relation(fields: [idTag], references: [id], onDelete: Cascade)
-
-  @@id([idTag, idMaterial])
-  @@index([idMaterial])
-}
-
-model Calificaciones {
-  id           Int        @id @default(autoincrement())
-  idMaterial   String
-  calificacion Int
-  comentario   String?
-  createdAt    DateTime   @default(now())
-  materiales   materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
-}
-
-model resumen {
-  id         Int        @id @default(autoincrement())
-  idMaterial String
-  resumen    String
-  materiales materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
-}
-
-model EstadoUsuario {
-  id          Int       @id @default(autoincrement())
-  nombre      String    @unique
-  descripcion String?
-  activo      Boolean   @default(true)
-  created_at  DateTime  @default(now())
-  updated_at  DateTime
-  Usuario     Usuario[]
-}
-
-model Usuario {
+model usuarios {
   id                                  String          @id
   email                               String          @unique
   nombre                              String
   apellido                            String
   telefono                            String?
+  biografia                           String?
   semestre                            Int             @default(1)
+  google_id                           String?         @unique
+  avatar_url                          String?
+  rol_id                              Int             @default(1)
+  estado_id                           Int             @default(1)
   ultimo_login                        DateTime?
+  disponibilidad                      Json?
   created_at                          DateTime        @default(now())
   updated_at                          DateTime
-  avatar_url                          String?
-  google_id                           String?         @unique
-  estado_id                           Int             @default(1)
-  rol_id                              Int             @default(1)
-  biografia                           String?
-  disponibilidad                      Json?
-  EstadoUsuario                       EstadoUsuario   @relation(fields: [estado_id], references: [id])
-  rol                                 rol             @relation(fields: [rol_id], references: [id])
-  materiales                          materiales[]
+  Materiales                          Materiales[]
   notifications                       notifications[]
   rating                              rating[]
   tutor_profile                       tutor_profile?
   tutoria_tutoria_studentIdTousuarios tutoria[]       @relation("tutoria_studentIdTousuarios")
   tutoria_tutoria_tutorIdTousuarios   tutoria[]       @relation("tutoria_tutorIdTousuarios")
+  estados_usuario                     estados_usuario @relation(fields: [estado_id], references: [id])
+  roles                               roles           @relation(fields: [rol_id], references: [id])
 
   @@index([email])
   @@index([estado_id])
   @@index([rol_id])
-}
-
-model rol {
-  id          Int       @id @default(autoincrement())
-  nombre      String    @unique
-  descripcion String?
-  activo      Boolean   @default(true)
-  created_at  DateTime  @default(now())
-  updated_at  DateTime
-  Usuario     Usuario[]
 }
 
 enum EstadoSesion {

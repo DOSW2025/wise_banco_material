@@ -78,38 +78,18 @@ export class MaterialService {
     const hash = createHash('sha256').update(pdfBuffer).digest('hex');
     this.logger.log(`Hash calculado: ${hash} (correlationId=${correlationId})`);
 
-    try {
-      // Intentamos crear el registro antes de subir al blob. Si ya existe un registro con ese hash,
-      // Prisma lanzará un error P2002 por la restricción unique y lo manejamos abajo.
-      await this.prisma.materiales.create({
-        data: {
-          id: correlationId,
-          nombre: filename,
-          userId: userId,
-          url: '',
-          descripcion: descripcion,
-          vistos: 0,
-          descargas: 0,
-          hash: hash,
-        },
-      });
-      this.logger.log(`Registro provisional creado en BD (id=${correlationId})`);
-    } catch (err: any) {
-      // Detectar colisión por unique constraint en Prisma (código P2002)
-      if (err.code === 'P2002') {
-        // Buscar el material existente por hash y lanzar una excepción de conflicto
-        const existingMaterial = await this.prisma.materiales.findUnique({
-          where: { hash },
-        });
-        throw new ConflictException(
-          `Este archivo ya existe en el sistema (ID: ${existingMaterial?.id})`
-        );
-      } else {
-        this.logger.error('Error creando registro provisional:', err);
-        throw new BadRequestException('Error al crear registro de material');
-      }
-    }
-
+    // Verificar si ya existe un material con el mismo hash
+    const existingMaterial = await this.prisma.materiales.findFirst({
+      where: { hash },
+    });
+    if (!existingMaterial) { 
+      this.logger.log(`No se encontró material con el mismo hash, continuando... (correlationId=${correlationId})`);
+    }else{
+      throw new ConflictException(
+        `Este archivo ya existe en el sistema (ID: ${existingMaterial?.id})`
+      );
+    } 
+    
     //Subir al blob
     const blobName = `${correlationId}-${filename}`.replace(/[^a-zA-Z0-9._-]/g, '_');
     let fileUrl: string;
@@ -117,12 +97,6 @@ export class MaterialService {
       fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
     } catch (err) {
       this.logger.error('Error subiendo PDF a Blob:', err as any);
-      // Si la subida falla, intentar eliminar el registro provisional para no dejar basura
-      try {
-        await this.prisma.materiales.delete({ where: { id: correlationId } });
-      } catch (e) {
-        this.logger.warn('No se pudo eliminar registro provisional tras fallo en blob upload');
-      }
       throw new BadRequestException('Error almacenando PDF');
     }
 
@@ -133,12 +107,6 @@ export class MaterialService {
       this.logger.error('Error enviando mensaje a IA:', err as any);
       // intentar limpiar blob si el envio falla
       await this.deleteBlobSafe(blobName, correlationId);
-      // y eliminar registro provisional
-      try {
-        await this.prisma.materiales.delete({ where: { id: correlationId } });
-      } catch (e) {
-        this.logger.warn('No se pudo eliminar registro provisional tras fallo en envío a IA');
-      }
       throw new BadRequestException('Error enviando a IA');
     }
 
@@ -196,7 +164,7 @@ export class MaterialService {
       userId: string;
       descripcion?: string;
       fileUrl: string;
-      hash?: string;
+      hash: string;
     },
   ) {
     const { correlationId, filename, blobName, userId, descripcion, hash } = ctx;
@@ -246,23 +214,11 @@ export class MaterialService {
     }
   }
 
-  async guardarMaterial(material: any, tags: string[]) {
+  async guardarMaterial(material: Material, tags: string[]) {
     // Usamos upsert para actualizar el registro provisional creado antes del upload
-    await this.prisma.materiales.upsert({
-      where: { id: material.id },
-      update: {
-        nombre: material.nombre,
-        userId: material.userId,
-        url: material.url,
-        descripcion: material.descripcion,
-        vistos: material.vistos ?? 0,
-        descargas: material.descargas ?? 0,
-        updatedAt: new Date(),
-        hash: material.hash,
-      },
-      create: material,
+    await this.prisma.materiales.create({
+      data: material,
     });
-
     this.logger.log(`Material guardado/actualizado en base de datos con id=${material.id}`);
     //lógica para manejar las etiquetas (tags)
     await this.guardarTags(tags, material.id);

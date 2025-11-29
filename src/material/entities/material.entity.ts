@@ -61,4 +61,11 @@ export class Material {
     @CreateDateColumn({ type: 'timestamp', default: () => 'UPDATED_TIMESTAMP' })
     updatedAt!: Date;
 
+    /**
+     * Hash del material para evitar duplicados.
+     */
+    @Index()
+    @Column({ type: 'varchar', length: 64 })
+    hash!: string;
+
 }
