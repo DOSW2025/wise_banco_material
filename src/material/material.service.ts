@@ -1,10 +1,11 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, ConflictException } from '@nestjs/common';
 import { ServiceBusClient, ServiceBusMessage } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { envs } from 'src/config';
 import { RespuestaIADto } from './dto/respuestIA.dto';
 import { NotificationDto } from 'src/material/dto/notificacion.dto';
 import { v4 as uuid } from 'uuid';
+import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
 
@@ -72,8 +73,24 @@ export class MaterialService {
     const correlationId = uuid();
     this.logger.log(`Iniciando validación de material (correlationId=${correlationId})`);
 
-    //Subir al blob
+    // Calcular hash (SHA-256) y crear registro provisional en BD para evitar duplicados
     const filename = originalName ?? 'file.pdf';
+    const hash = createHash('sha256').update(pdfBuffer).digest('hex');
+    this.logger.log(`Hash calculado: ${hash} (correlationId=${correlationId})`);
+
+    // Verificar si ya existe un material con el mismo hash
+    const existingMaterial = await this.prisma.materiales.findFirst({
+      where: { hash },
+    });
+    if (!existingMaterial) { 
+      this.logger.log(`No se encontró material con el mismo hash, continuando... (correlationId=${correlationId})`);
+    }else{
+      throw new ConflictException(
+        `Este archivo ya existe en el sistema (ID: ${existingMaterial?.id})`
+      );
+    } 
+    
+    //Subir al blob
     const blobName = `${correlationId}-${filename}`.replace(/[^a-zA-Z0-9._-]/g, '_');
     let fileUrl: string;
     try {
@@ -104,6 +121,7 @@ export class MaterialService {
       userId,
       descripcion,
       fileUrl,
+      hash,
     });
 
     return response;
@@ -146,9 +164,10 @@ export class MaterialService {
       userId: string;
       descripcion?: string;
       fileUrl: string;
+      hash: string;
     },
   ) {
-    const { correlationId, filename, blobName, userId, descripcion } = ctx;
+    const { correlationId, filename, blobName, userId, descripcion, hash } = ctx;
     if (response.valid) {
       this.logger.log(`Material validado como VÁLIDO por IA (correlationId=${correlationId})`);
       try {
@@ -163,6 +182,7 @@ export class MaterialService {
             descargas: 0,
             createdAt: new Date(),
             updatedAt: new Date(),
+            hash: hash,
           },
           response.tags,
         );
@@ -195,8 +215,11 @@ export class MaterialService {
   }
 
   async guardarMaterial(material: Material, tags: string[]) {
-    await this.prisma.materiales.create({data: material})
-    this.logger.log(`Material guardado en base de datos con id=${material.id}`);
+    // Usamos upsert para actualizar el registro provisional creado antes del upload
+    await this.prisma.materiales.create({
+      data: material,
+    });
+    this.logger.log(`Material guardado/actualizado en base de datos con id=${material.id}`);
     //lógica para manejar las etiquetas (tags)
     await this.guardarTags(tags, material.id);
   }

@@ -5,6 +5,57 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Calificaciones {
+  id           Int        @id @default(autoincrement())
+  idMaterial   String
+  calificacion Int
+  comentario   String?
+  createdAt    DateTime   @default(now())
+  Materiales   Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+}
+
+model MaterialTags {
+  idTag      Int
+  idMaterial String
+  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  Tags       Tags       @relation(fields: [idTag], references: [id], onDelete: Cascade)
+
+  @@id([idTag, idMaterial])
+  @@index([idMaterial])
+}
+
+model Materiales {
+  id             String           @id
+  nombre         String
+  userId         String
+  url            String
+  descripcion    String?
+  vistos         Int              @default(0)
+  descargas      Int              @default(0)
+  createdAt      DateTime         @default(now())
+  hash           String?          @unique
+  updatedAt      DateTime
+  Calificaciones Calificaciones[]
+  MaterialTags   MaterialTags[]
+  usuarios       usuarios         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Resumen        Resumen[]
+}
+
+model Resumen {
+  id         Int        @id @default(autoincrement())
+  idMaterial String
+  resumen    String
+  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+}
+
+model Tags {
+  id           Int            @id @default(autoincrement())
+  tag          String         @unique
+  MaterialTags MaterialTags[]
 }
 
 model estados_usuario {
@@ -124,16 +175,17 @@ model usuarios {
   nombre                              String
   apellido                            String
   telefono                            String?
+  biografia                           String?
   semestre                            Int             @default(1)
+  google_id                           String?         @unique
+  avatar_url                          String?
+  rol_id                              Int             @default(1)
+  estado_id                           Int             @default(1)
   ultimo_login                        DateTime?
+  disponibilidad                      Json?
   created_at                          DateTime        @default(now())
   updated_at                          DateTime
-  avatar_url                          String?
-  google_id                           String?         @unique
-  estado_id                           Int             @default(1)
-  rol_id                              Int             @default(1)
-  biografia                           String?
-  disponibilidad                      Json?
+  Materiales                          Materiales[]
   notifications                       notifications[]
   rating                              rating[]
   tutor_profile                       tutor_profile?
@@ -145,7 +197,6 @@ model usuarios {
   @@index([email])
   @@index([estado_id])
   @@index([rol_id])
-  materiales materiales[]
 }
 
 enum EstadoSesion {
@@ -159,60 +210,4 @@ enum EstadoSesion {
 enum Modalidad {
   VIRTUAL
   PRESENCIAL
-}
-
-//Materiales
-
-model materiales {
-  id          String             @id
-  nombre      String
-  userId      String
-  url         String
-  descripcion String?
-  vistos      Int                @default(0)
-  descargas   Int                @default(0)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-
-  usuarios    usuarios @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tags        MaterialTags[]
-  calificaciones Calificaciones[]
-
-  resumens resumen[]
-}
-
-model Tags {
-  id Int     @id @default(autoincrement())
-  tag   String  @unique
-
-  materiales MaterialTags[]
-}
-
-model MaterialTags {
-  idTag      Int
-  idMaterial String
-
-  Tags        Tags        @relation(fields: [idTag], references: [id], onDelete: Cascade)
-  materiales  materiales  @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
-
-  @@id([idTag, idMaterial])
-  @@index([idMaterial])
-}
-
-model Calificaciones {
-  id          Int        @id @default(autoincrement())
-  idMaterial  String
-  calificacion Int
-  comentario   String?
-  createdAt    DateTime  @default(now())
-
-  materiales   materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
-}
-
-model resumen {
-  id          Int        @id @default(autoincrement())
-  idMaterial  String
-  resumen     String
-
-  materiales  materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
 }
