@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { MaterialListItemDto } from './material-list-item.dto';
+import { MaterialListItemDto } from './material.dto';
 
 export class UserMaterialsResponseDto {
   @ApiProperty({

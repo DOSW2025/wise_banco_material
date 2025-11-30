@@ -16,7 +16,7 @@ jest.mock('uuid', () => ({
 import { MaterialController } from './material.controller';
 import { MaterialService } from './material.service';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
-import { MaterialListItemDto } from './dto/material-list-item.dto';
+import { MaterialListItemDto } from './dto/material.dto';
 
 describe('MaterialController', () => {
   let controller: MaterialController;
