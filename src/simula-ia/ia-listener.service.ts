@@ -10,7 +10,6 @@ export class IAListener {
   private sender;
 
   constructor(private readonly client: ServiceBusClient) {
-
     // Recibe documentos desde la cola "material.process"
     this.receiver = this.client.createReceiver('material.process');
 
@@ -38,7 +37,7 @@ export class IAListener {
           }
         } catch (err) {
           this.logger.error(
-            'Error al descomprimir el mensaje: ' + (err?.message || err)
+            'Error al descomprimir el mensaje: ' + (err?.message || err),
           );
           buffer = null;
         }
@@ -55,7 +54,9 @@ export class IAListener {
 
         await this.sender.sendMessages(responseMessage);
 
-        this.logger.log(`Respuesta enviada con correlationId: ${msg.correlationId}`);
+        this.logger.log(
+          `Respuesta enviada con correlationId: ${msg.correlationId}`,
+        );
       },
 
       processError: async (error) => {
@@ -66,13 +67,15 @@ export class IAListener {
 
   // Aquí iría tu IA real
   analyze(buffer: Buffer) {
-    const mensaje: ServiceBusMessage ={
-      body: {valid: true, 
+    const mensaje: ServiceBusMessage = {
+      body: {
+        valid: true,
         reason: 'Documento válido',
-        tags: ['ejemplo', 'pdf', 'verificado'],},
+        tags: ['ejemplo', 'pdf', 'verificado'],
+      },
       correlationId: '',
       contentType: 'application/json',
-    }
-    return mensaje.body
+    };
+    return mensaje.body;
   }
 }

@@ -5,9 +5,13 @@ jest.mock('../config', () => ({
   },
 }));
 
-jest.mock('../prisma/prisma.service', () => ({
-  PrismaService: jest.fn(),
-}), { virtual: true });
+jest.mock(
+  '../prisma/prisma.service',
+  () => ({
+    PrismaService: jest.fn(),
+  }),
+  { virtual: true },
+);
 
 jest.mock('uuid', () => ({
   v4: jest.fn(() => 'test-uuid'),
@@ -51,7 +55,9 @@ describe('MaterialController', () => {
 
     const result = await controller.getMaterialsByUser('user-123');
 
-    expect(serviceMock.getMaterialsByUserWithStats).toHaveBeenCalledWith('user-123');
+    expect(serviceMock.getMaterialsByUserWithStats).toHaveBeenCalledWith(
+      'user-123',
+    );
     expect(result).toBe(mockResponse);
   });
 

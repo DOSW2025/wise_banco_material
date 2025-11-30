@@ -15,7 +15,8 @@ export class UserMaterialsResponseDto {
   totalVistas: number;
 
   @ApiProperty({
-    description: 'Total de descargas sumadas de todos los materiales del usuario',
+    description:
+      'Total de descargas sumadas de todos los materiales del usuario',
     example: 45,
   })
   totalDescargas: number;

@@ -99,9 +99,7 @@ export class MaterialController {
   ) {
     // Validación: debe enviarse un archivo
     if (!file) {
-      throw new BadRequestException(
-        'Archivo PDF requerido en el campo "file"',
-      );
+      throw new BadRequestException('Archivo PDF requerido en el campo "file"');
     }
 
     // Validación: mimetype debe ser PDF
@@ -160,7 +158,7 @@ export class MaterialController {
   })
   @ApiResponse({
     status: 404,
-    description: 'El usuario no existe o no tiene materiales registrados.',
+    description: 'El usuario no existe.',
   })
   async getMaterialsByUser(
     @Param('userId') userId: string,

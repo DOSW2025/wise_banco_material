@@ -6,9 +6,13 @@ jest.mock('../config', () => ({
   },
 }));
 
-jest.mock('../prisma/prisma.service', () => ({
-  PrismaService: jest.fn(),
-}), { virtual: true });
+jest.mock(
+  '../prisma/prisma.service',
+  () => ({
+    PrismaService: jest.fn(),
+  }),
+  { virtual: true },
+);
 
 jest.mock('uuid', () => ({
   v4: jest.fn(() => 'test-uuid'),
@@ -60,6 +64,9 @@ describe('MaterialService', () => {
       materialTags: {
         create: jest.fn(),
       },
+      usuarios: {
+        findUnique: jest.fn(),
+      },
     };
 
     subscribeMock = jest.fn();
@@ -73,10 +80,7 @@ describe('MaterialService', () => {
       }),
     };
 
-    service = new MaterialService(
-      serviceBusClientMock as any,
-      prismaMock as any,
-    );
+    service = new MaterialService(serviceBusClientMock, prismaMock);
   });
 
   // estadísticas
@@ -84,6 +88,7 @@ describe('MaterialService', () => {
     it('debería devolver los materiales del usuario con estadísticas correctas', async () => {
       const now = new Date();
 
+      prismaMock.usuarios.findUnique.mockResolvedValue({ id: 'user-123' });
       prismaMock.materiales.findMany.mockResolvedValue([
         {
           id: 'mat-1',
@@ -95,14 +100,8 @@ describe('MaterialService', () => {
           descargas: 3,
           createdAt: now,
           updatedAt: now,
-          tags: [
-            { Tags: { tag: 'cálculo' } },
-            { Tags: { tag: 'parcial' } },
-          ],
-          calificaciones: [
-            { calificacion: 4 },
-            { calificacion: 5 },
-          ],
+          tags: [{ Tags: { tag: 'cálculo' } }, { Tags: { tag: 'parcial' } }],
+          calificaciones: [{ calificacion: 4 }, { calificacion: 5 }],
         },
         {
           id: 'mat-2',
@@ -144,6 +143,7 @@ describe('MaterialService', () => {
     it('debería manejar el caso sin calificaciones', async () => {
       const now = new Date();
 
+      prismaMock.usuarios.findUnique.mockResolvedValue({ id: 'user-123' });
       prismaMock.materiales.findMany.mockResolvedValue([
         {
           id: 'mat-1',
@@ -166,6 +166,14 @@ describe('MaterialService', () => {
       expect(result.calificacionPromedio).toBeNull();
       expect(result.totalVistas).toBe(0);
       expect(result.totalDescargas).toBe(0);
+    });
+
+    it('debería lanzar NotFoundException si el usuario no existe', async () => {
+      prismaMock.usuarios.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getMaterialsByUserWithStats('user-no-existe'),
+      ).rejects.toThrow('El usuario con id user-no-existe no existe');
     });
   });
 
@@ -249,7 +257,9 @@ describe('MaterialService', () => {
 
       await service.guardarMaterial(material as any, ['calculo', 'algebra']);
 
-      expect(prismaMock.materiales.create).toHaveBeenCalledWith({ data: material });
+      expect(prismaMock.materiales.create).toHaveBeenCalledWith({
+        data: material,
+      });
       expect(prismaMock.tags.findUnique).toHaveBeenCalledTimes(2);
       expect(prismaMock.tags.create).toHaveBeenCalledTimes(1);
       expect(prismaMock.materialTags.create).toHaveBeenCalledTimes(2);
@@ -270,7 +280,9 @@ describe('MaterialService', () => {
 
       await service.guardarMaterial(material as any, []);
 
-      expect(prismaMock.materiales.create).toHaveBeenCalledWith({ data: material });
+      expect(prismaMock.materiales.create).toHaveBeenCalledWith({
+        data: material,
+      });
       expect(prismaMock.tags.findUnique).not.toHaveBeenCalled();
       expect(prismaMock.materialTags.create).not.toHaveBeenCalled();
     });
@@ -287,7 +299,9 @@ describe('MaterialService', () => {
       } as any;
 
       const notificationSender = (service as any).notification;
-      (notificationSender.sendMessages as jest.Mock).mockResolvedValue(undefined);
+      (notificationSender.sendMessages as jest.Mock).mockResolvedValue(
+        undefined,
+      );
 
       await service.enviarNotificacionNuevoMaterial(response);
 
@@ -415,9 +429,7 @@ describe('MaterialService', () => {
     });
 
     it('deleteBlobSafe debería loggear cuando se elimina el blob', async () => {
-      const deleteMock = jest
-        .fn()
-        .mockResolvedValue({ succeeded: true });
+      const deleteMock = jest.fn().mockResolvedValue({ succeeded: true });
 
       const blockBlob = {
         deleteIfExists: deleteMock,
@@ -436,9 +448,7 @@ describe('MaterialService', () => {
     });
 
     it('deleteBlobSafe debería manejar el caso en que no se pueda eliminar', async () => {
-      const deleteMock = jest
-        .fn()
-        .mockResolvedValue({ succeeded: false });
+      const deleteMock = jest.fn().mockResolvedValue({ succeeded: false });
 
       const blockBlob = {
         deleteIfExists: deleteMock,
@@ -454,9 +464,7 @@ describe('MaterialService', () => {
     });
 
     it('deleteBlobSafe debería atrapar errores del cliente', async () => {
-      const deleteMock = jest
-        .fn()
-        .mockRejectedValue(new Error('blob error'));
+      const deleteMock = jest.fn().mockRejectedValue(new Error('blob error'));
 
       const blockBlob = {
         deleteIfExists: deleteMock,
@@ -483,13 +491,16 @@ describe('MaterialService', () => {
       (service as any).sendAnalysisMessage = jest
         .fn()
         .mockResolvedValue(undefined);
-      const fakeResponse = { valid: true, tags: [], tema: 'T', materia: 'M' } as any;
+      const fakeResponse = {
+        valid: true,
+        tags: [],
+        tema: 'T',
+        materia: 'M',
+      } as any;
       (service as any).waitForResponse = jest
         .fn()
         .mockResolvedValue(fakeResponse);
-      (service as any).handleResponse = jest
-        .fn()
-        .mockResolvedValue(undefined);
+      (service as any).handleResponse = jest.fn().mockResolvedValue(undefined);
 
       const result = await service.validateMaterial(
         pdfBuffer,
@@ -512,7 +523,9 @@ describe('MaterialService', () => {
         'analysis',
       );
 
-      expect((service as any).waitForResponse).toHaveBeenCalledWith('test-uuid');
+      expect((service as any).waitForResponse).toHaveBeenCalledWith(
+        'test-uuid',
+      );
 
       expect((service as any).handleResponse).toHaveBeenCalledWith(
         fakeResponse,
@@ -546,9 +559,7 @@ describe('MaterialService', () => {
       (service as any).sendAnalysisMessage = jest
         .fn()
         .mockRejectedValue(new Error('IA error'));
-      (service as any).deleteBlobSafe = jest
-        .fn()
-        .mockResolvedValue(undefined);
+      (service as any).deleteBlobSafe = jest.fn().mockResolvedValue(undefined);
 
       await expect(
         service.validateMaterial(pdfBuffer, 'archivo.pdf', 'user-1', 'desc'),
@@ -583,7 +594,9 @@ describe('MaterialService', () => {
       } as any;
 
       (service as any).guardarMaterial = jest.fn().mockResolvedValue(undefined);
-      (service as any).sendAnalysisMessage = jest.fn().mockResolvedValue(undefined);
+      (service as any).sendAnalysisMessage = jest
+        .fn()
+        .mockResolvedValue(undefined);
       (service as any).enviarNotificacionNuevoMaterial = jest
         .fn()
         .mockResolvedValue(undefined);
@@ -598,9 +611,9 @@ describe('MaterialService', () => {
         baseCtx.correlationId,
         'save',
       );
-      expect((service as any).enviarNotificacionNuevoMaterial).toHaveBeenCalledWith(
-        response,
-      );
+      expect(
+        (service as any).enviarNotificacionNuevoMaterial,
+      ).toHaveBeenCalledWith(response);
     });
 
     it('debería eliminar el blob cuando la respuesta es NO válida', async () => {

@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ServiceBusClient, ServiceBusMessage } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { envs } from '../config';
@@ -14,26 +19,36 @@ import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 export class MaterialService {
   private readonly logger = new Logger(MaterialService.name);
 
-  private sender;              // Cola donde enviamos los PDFs
-  private notification;        // Cola opcional para envío de mails
-  private responseReceiver;    // Cola donde recibimos respuestas
+  private sender; // Cola donde enviamos los PDFs
+  private notification; // Cola opcional para envío de mails
+  private responseReceiver; // Cola donde recibimos respuestas
   private blobServiceClient: BlobServiceClient;
   private containerClient: any;
   private readonly containerName = 'materials';
-  
-  // Mapa que guarda promesas pendientes por correlationId
-  private pendingRequests: Map<string, (msg: RespuestaIADto) => void> = new Map();
 
-  constructor(private readonly client: ServiceBusClient, private prisma: PrismaService) {
+  // Mapa que guarda promesas pendientes por correlationId
+  private pendingRequests: Map<string, (msg: RespuestaIADto) => void> =
+    new Map();
+
+  constructor(
+    private readonly client: ServiceBusClient,
+    private prisma: PrismaService,
+  ) {
     this.sender = this.client.createSender('material.process');
     this.notification = this.client.createSender('mail.envio.rol');
     this.responseReceiver = this.client.createReceiver('material.responses');
     // Inicializar BlobServiceClient
-    this.blobServiceClient = BlobServiceClient.fromConnectionString(envs.blobStorageConnectionString);
-    this.containerClient = this.blobServiceClient.getContainerClient(this.containerName);
+    this.blobServiceClient = BlobServiceClient.fromConnectionString(
+      envs.blobStorageConnectionString,
+    );
+    this.containerClient = this.blobServiceClient.getContainerClient(
+      this.containerName,
+    );
     // Intentar crear el contenedor si no existe (no bloqueante)
     this.containerClient.createIfNotExists().catch((err: any) => {
-      this.logger.warn(`No se pudo crear/asegurar contenedor '${this.containerName}': ${err?.message ?? err}`);
+      this.logger.warn(
+        `No se pudo crear/asegurar contenedor '${this.containerName}': ${err?.message ?? err}`,
+      );
     });
 
     this.listenForResponses();
@@ -57,7 +72,9 @@ export class MaterialService {
           resolver?.(message.body as RespuestaIADto);
           this.pendingRequests.delete(correlationId);
         } else {
-          this.logger.warn(`No hay solicitud pendiente para correlationId: ${correlationId}`);
+          this.logger.warn(
+            `No hay solicitud pendiente para correlationId: ${correlationId}`,
+          );
         }
       },
 
@@ -70,26 +87,41 @@ export class MaterialService {
   /**
    * Envía un PDF a IA y espera su respuesta vía correlationId
    */
-  async validateMaterial(pdfBuffer: Buffer, originalName: string, userId: string, descripcion?: string): Promise<RespuestaIADto> {
+  async validateMaterial(
+    pdfBuffer: Buffer,
+    originalName: string,
+    userId: string,
+    descripcion?: string,
+  ): Promise<RespuestaIADto> {
     const correlationId = uuid();
-    this.logger.log(`Iniciando validación de material (correlationId=${correlationId})`);
+    this.logger.log(
+      `Iniciando validación de material (correlationId=${correlationId})`,
+    );
 
     //Subir al blob
     const filename = originalName ?? 'file.pdf';
-    const blobName = `${correlationId}-${filename}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blobName = `${correlationId}-${filename}`.replace(
+      /[^a-zA-Z0-9._-]/g,
+      '_',
+    );
     let fileUrl: string;
     try {
       fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
     } catch (err) {
-      this.logger.error('Error subiendo PDF a Blob:', err as any);
+      this.logger.error('Error subiendo PDF a Blob:', err);
       throw new BadRequestException('Error almacenando PDF');
     }
 
     //Enviar mensaje a la cola de IA
     try {
-      await this.sendAnalysisMessage(fileUrl, blobName, correlationId, 'analysis');
+      await this.sendAnalysisMessage(
+        fileUrl,
+        blobName,
+        correlationId,
+        'analysis',
+      );
     } catch (err) {
-      this.logger.error('Error enviando mensaje a IA:', err as any);
+      this.logger.error('Error enviando mensaje a IA:', err);
       // intentar limpiar blob si el envio falla
       await this.deleteBlobSafe(blobName, correlationId);
       throw new BadRequestException('Error enviando a IA');
@@ -111,7 +143,10 @@ export class MaterialService {
     return response;
   }
 
-  private async uploadToBlob(pdfBuffer: Buffer, blobName: string): Promise<string> {
+  private async uploadToBlob(
+    pdfBuffer: Buffer,
+    blobName: string,
+  ): Promise<string> {
     const blockBlobClient = this.containerClient.getBlockBlobClient(blobName);
     await blockBlobClient.uploadData(pdfBuffer, {
       blobHTTPHeaders: { blobContentType: 'application/pdf' },
@@ -119,7 +154,12 @@ export class MaterialService {
     return blockBlobClient.url;
   }
 
-  private async sendAnalysisMessage(fileUrl: string, blobName: string, correlationId: string, eventType: string) {
+  private async sendAnalysisMessage(
+    fileUrl: string,
+    blobName: string,
+    correlationId: string,
+    eventType: string,
+  ) {
     const message: ServiceBusMessage = {
       body: {
         fileUrl,
@@ -152,7 +192,9 @@ export class MaterialService {
   ) {
     const { correlationId, filename, blobName, userId, descripcion } = ctx;
     if (response.valid) {
-      this.logger.log(`Material validado como VÁLIDO por IA (correlationId=${correlationId})`);
+      this.logger.log(
+        `Material validado como VÁLIDO por IA (correlationId=${correlationId})`,
+      );
       try {
         await this.guardarMaterial(
           {
@@ -171,13 +213,15 @@ export class MaterialService {
         this.sendAnalysisMessage('', blobName, correlationId, 'save');
         await this.enviarNotificacionNuevoMaterial(response);
       } catch (err) {
-        this.logger.error('Error guardando material válido:', err as any);
+        this.logger.error('Error guardando material válido:', err);
         // intentar limpiar blob si el guardado falla
         await this.deleteBlobSafe(blobName, correlationId);
         throw new BadRequestException('Error guardando material válido');
       }
     } else {
-      this.logger.log(`Material validado como NO VÁLIDO por IA (correlationId=${correlationId})`);
+      this.logger.log(
+        `Material validado como NO VÁLIDO por IA (correlationId=${correlationId})`,
+      );
       await this.deleteBlobSafe(blobName, correlationId);
     }
   }
@@ -187,17 +231,21 @@ export class MaterialService {
       const blockBlobClient = this.containerClient.getBlockBlobClient(blobName);
       const deleteResult = await blockBlobClient.deleteIfExists();
       if (deleteResult.succeeded) {
-        this.logger.log(`Blob eliminado: ${blobName} (correlationId=${correlationId})`);
+        this.logger.log(
+          `Blob eliminado: ${blobName} (correlationId=${correlationId})`,
+        );
       } else {
-        this.logger.warn(`No se pudo eliminar el blob (no existe o ya eliminado): ${blobName} (correlationId=${correlationId})`);
+        this.logger.warn(
+          `No se pudo eliminar el blob (no existe o ya eliminado): ${blobName} (correlationId=${correlationId})`,
+        );
       }
     } catch (err) {
-      this.logger.error(`Error eliminando blob ${blobName}:`, err as any);
+      this.logger.error(`Error eliminando blob ${blobName}:`, err);
     }
   }
 
   async guardarMaterial(material: Material, tags: string[]) {
-    await this.prisma.materiales.create({data: material})
+    await this.prisma.materiales.create({ data: material });
     this.logger.log(`Material guardado en base de datos con id=${material.id}`);
     //lógica para manejar las etiquetas (tags)
     await this.guardarTags(tags, material.id);
@@ -224,13 +272,15 @@ export class MaterialService {
             idTag: etiqueta.id,
           },
         });
-        this.logger.log(`Relación creada entre material ${materialId} y etiqueta ${etiqueta.id}`);
+        this.logger.log(
+          `Relación creada entre material ${materialId} y etiqueta ${etiqueta.id}`,
+        );
       }
     }
   }
 
   async enviarNotificacionNuevoMaterial(response: RespuestaIADto) {
-    const cuerpo : NotificationDto= {
+    const cuerpo: NotificationDto = {
       rol: 'estudiante',
       template: 'nuevoMaterialSubido',
       resumen: `Se ha subido un nuevo materia de ${response.tema}`,
@@ -238,22 +288,34 @@ export class MaterialService {
       materia: response.materia,
       guardar: false,
       mandarCorreo: false,
-    }
+    };
 
-    const Message : ServiceBusMessage= {
+    const Message: ServiceBusMessage = {
       body: cuerpo,
-    }
+    };
 
     await this.notification.sendMessages(Message);
   }
 
-    /**
+  /**
    * Obtiene los materiales de un usuario y calcula estadísticas básicas:
    * totalVistas
    * totalDescargas
    * calificacionPromedio global (sobre todas las calificaciones de sus materiales).
+   *
+   * @throws NotFoundException si el usuario no existe
    */
-  async getMaterialsByUserWithStats(userId: string): Promise<UserMaterialsResponseDto> {
+  async getMaterialsByUserWithStats(
+    userId: string,
+  ): Promise<UserMaterialsResponseDto> {
+    // Verify user exists
+    const user = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!user) {
+      throw new NotFoundException(`El usuario con id ${userId} no existe`);
+    }
+
     const materiales = await this.prisma.materiales.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -263,7 +325,9 @@ export class MaterialService {
       },
     });
 
-    const materialsDto = materiales.map((m: any) => this.toMaterialListItemDto(m));
+    const materialsDto = materiales.map((m: any) =>
+      this.toMaterialListItemDto(m),
+    );
 
     // Estadísticas básicas
     const totalVistas = materiales.reduce(
@@ -334,7 +398,7 @@ export class MaterialService {
       id: material.id,
       nombre: material.nombre,
       userId: material.userId,
-      url: material.url, 
+      url: material.url,
       descripcion: material.descripcion,
       vistos: material.vistos,
       descargas: material.descargas,
@@ -344,6 +408,4 @@ export class MaterialService {
       calificacionPromedio: promedio,
     };
   }
-
-
 }
