@@ -1,12 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { MaterialListItemDto } from './material.dto';
+import { MaterialDto } from './material.dto';
 
 export class UserMaterialsResponseDto {
   @ApiProperty({
     description: 'Listado de materiales asociados al usuario',
-    type: [MaterialListItemDto],
+    type: [MaterialDto],
   })
-  materials: MaterialListItemDto[];
+  materials: MaterialDto[];
 
   @ApiProperty({
     description: 'Total de vistas sumadas de todos los materiales del usuario',
