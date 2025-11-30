@@ -8,7 +8,7 @@ import { v4 as uuid } from 'uuid';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
-import { MaterialListItemDto } from './dto/material-list-item.dto';
+import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 
 @Injectable()
@@ -259,7 +259,7 @@ export class MaterialService {
       resumen: `Se ha subido un nuevo materia de ${response.tema}`,
       tema: response.tema,
       materia: response.materia,
-      guardar: false,
+      guardar: true,
       mandarCorreo: false,
     }
 
@@ -281,12 +281,12 @@ export class MaterialService {
       where: { userId },
       orderBy: { createdAt: 'desc' },
       include: {
-        tags: { include: { Tags: true } },
-        calificaciones: true,
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
       },
     });
 
-    const materialsDto = materiales.map((m: any) => this.toMaterialListItemDto(m));
+    const materialsDto = materiales.map((m: any) => this.toMaterialDto(m));
 
     // Estadísticas básicas
     const totalVistas = materiales.reduce(
@@ -324,7 +324,7 @@ export class MaterialService {
    * Obtiene los materiales más populares en el sistema,
    * ordenados por descargas y, en segundo lugar, por vistas.
    */
-  async getPopularMaterials(limit = 10): Promise<MaterialListItemDto[]> {
+  async getPopularMaterials(limit: number): Promise<MaterialDto[]> {
     const materiales = await this.prisma.materiales.findMany({
       orderBy: [
         { descargas: 'desc' },
@@ -333,18 +333,18 @@ export class MaterialService {
       ],
       take: limit,
       include: {
-        tags: { include: { Tags: true } },
-        calificaciones: true,
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
       },
     });
 
-    return materiales.map((m: any) => this.toMaterialListItemDto(m));
+    return materiales.map((m: any) => this.toMaterialDto(m));
   }
 
   /**
    * Mapea el modelo de Prisma al DTO de salida para listas.
    */
-  private toMaterialListItemDto(material: any): MaterialListItemDto {
+  private toMaterialDto(material: any): MaterialDto {
     const promedio =
       material.calificaciones && material.calificaciones.length > 0
         ? material.calificaciones.reduce(
@@ -363,7 +363,7 @@ export class MaterialService {
       descargas: material.descargas,
       createdAt: material.createdAt,
       updatedAt: material.updatedAt,
-      tags: material.tags?.map((t: any) => t.Tags?.tag) ?? [],
+      tags: material.tag?.map((t: any) => t.Tags?.tag) ?? [],
       calificacionPromedio: promedio,
     };
   }

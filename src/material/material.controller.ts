@@ -1,26 +1,9 @@
-import {
-  Controller,
-  Post,
-  UploadedFile,
-  UseInterceptors,
-  BadRequestException,
-  Body,
-  Logger,
-  Get,
-  Param,
-} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
-  ApiTags,
-  ApiConsumes,
-  ApiBody,
-} from '@nestjs/swagger';
-import { MaterialListItemDto } from './dto/material-list-item.dto';
+import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
+import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 
 /**
@@ -183,11 +166,11 @@ export class MaterialController {
   @ApiResponse({
     status: 200,
     description: 'Listado de materiales ordenados por popularidad.',
-    type: MaterialListItemDto,
+    type: MaterialDto,
     isArray: true,
   })
-  async getPopularMaterials(): Promise<MaterialListItemDto[]> {
+  async getPopularMaterials(@Query('limit') limit?: number): Promise<MaterialDto[]> {
     // top 10 fijo temporal
-    return this.materialService.getPopularMaterials(10);
+    return this.materialService.getPopularMaterials(limit ?? 10);
   }
 }

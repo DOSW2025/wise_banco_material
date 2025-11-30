@@ -28,6 +28,7 @@
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.2.3",
+    "@prisma/adapter-pg": "^7.0.1",
     "@prisma/client": "^7.0.1",
     "@prisma/config": "^7.0.1",
     "amqplib": "^0.10.9",
@@ -86,11 +87,10 @@
     ],
     "coverageDirectory": "../coverage",
     "coverageReporters": [
-    "html",
-    "text",
-    "lcov"
-  ],
+      "html",
+      "text",
+      "lcov"
+    ],
     "testEnvironment": "node"
   }
-
 }
