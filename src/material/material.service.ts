@@ -1,11 +1,11 @@
 import { Injectable, BadRequestException, Logger, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { ServiceBusClient, ServiceBusMessage } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
+import { createHash } from 'node:crypto';
 import { envs } from '../config';
 import { RespuestaIADto } from './dto/respuestIA.dto';
 import { NotificationDto } from 'src/material/dto/notificacion.dto';
 import { v4 as uuid } from 'uuid';
-import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
 import { MaterialDto } from './dto/material.dto';
@@ -420,5 +420,121 @@ export class MaterialService {
     };
   }
 
+  /**
+   * Descarga un material específico.
+   * 
+   * Cumple con las siguientes reglas de negocio:
+   * - RN-026-1: Incrementa el contador de descargas del material
+   * - RN-026-3: Registra un evento de descarga en analytics vía RabbitMQ
+   * 
+   * Operaciones:
+   * 1. Valida que el material exista en la base de datos
+   * 2. Incrementa el contador de descargas (descargas++)
+   * 3. Envía un evento de analytics a RabbitMQ para registrar la descarga
+   * 4. Retorna la URL del material para su descarga
+   * 
+   * @param materialId - ID del material a descargar
+   * @param userId - ID del usuario que descarga (para analytics)
+   * @param clientIp - Dirección IP del cliente (opcional)
+   * @param userAgent - User agent del cliente (opcional)
+   * @returns Promesa que contiene la URL del archivo para descargar
+   * @throws BadRequestException si el material no existe
+   * @throws Error si falla el registro del evento de analytics
+   */
+  async downloadMaterial(
+    materialId: string,
+    userId: string,
+    clientIp?: string,
+    userAgent?: string,
+  ): Promise<{ url: string }> {
+    this.logger.log(`Iniciando descarga del material ${materialId} por usuario ${userId}`);
 
+    // 1. Validar que el material existe
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+
+    if (!material) {
+      this.logger.warn(`Intento de descarga de material inexistente: ${materialId}`);
+      throw new BadRequestException(`Material con id ${materialId} no existe`);
+    }
+
+    try {
+      // 2. Incrementar contador de descargas (RN-026-1)
+      await this.prisma.materiales.update({
+        where: { id: materialId },
+        data: { descargas: { increment: 1 } },
+      });
+      this.logger.log(`Contador de descargas incrementado para material ${materialId}`);
+
+      // 3. Enviar evento de analytics a RabbitMQ (RN-026-3)
+      await this.publishDownloadAnalyticsEvent(
+        materialId,
+        userId,
+        material.nombre,
+        clientIp,
+        userAgent,
+      );
+
+      // 4. Retornar la URL del material
+      return { url: material.url };
+    } catch (error) {
+      this.logger.error(
+        `Error al procesar descarga del material ${materialId}: ${(error as Error).message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Publica un evento de descarga en el bus de mensajes (RabbitMQ/Service Bus)
+   * para el sistema de analytics.
+   * 
+   * Cumple con RN-026-3: Registrar un evento en analytics por cada descarga
+   * 
+   * @param materialId - ID del material descargado
+   * @param userId - ID del usuario que descarga
+   * @param materialName - Nombre del material
+   * @param clientIp - IP del cliente (opcional)
+   * @param userAgent - User agent del cliente (opcional)
+   */
+  private async publishDownloadAnalyticsEvent(
+    materialId: string,
+    userId: string,
+    materialName: string,
+    clientIp?: string,
+    userAgent?: string,
+  ): Promise<void> {
+    try {
+      const analyticsEvent = {
+        materialId,
+        userId,
+        materialName,
+        timestamp: new Date(),
+        eventType: 'download',
+        clientIp,
+        userAgent,
+      };
+
+      const message: ServiceBusMessage = {
+        body: analyticsEvent,
+        subject: 'material.download',
+        contentType: 'application/json',
+      };
+
+      // Crear un sender para la cola de analytics (si existe)
+      const analyticsSender = this.client.createSender('material.analytics');
+      await analyticsSender.sendMessages(message);
+      await analyticsSender.close();
+
+      this.logger.log(
+        `Evento de descarga publicado en analytics para material ${materialId}`,
+      );
+    } catch (error) {
+      // No lanzar excepción para que la descarga no falle si analytics falla
+      this.logger.error(
+        `Advertencia: Error publicando evento de analytics: ${(error as Error).message}`,
+      );
+    }
+  }
 }
