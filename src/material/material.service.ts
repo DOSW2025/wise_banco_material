@@ -129,6 +129,12 @@ export class MaterialService {
     return response;
   }
 
+  /**
+   *  Sube el PDF a Azure Blob Storage
+   * @param pdfBuffer  Buffer que contiene el PDF
+   * @param blobName Nombre del blob en Azure Storage
+   * @returns URL del blob subido
+   */
   private async uploadToBlob(pdfBuffer: Buffer, blobName: string): Promise<string> {
     const blockBlobClient = this.containerClient.getBlockBlobClient(blobName);
     await blockBlobClient.uploadData(pdfBuffer, {
@@ -136,7 +142,14 @@ export class MaterialService {
     });
     return blockBlobClient.url;
   }
-
+  
+  /**
+   *  Envía un mensaje a la cola de IA para análisis o guardado
+   * @param fileUrl URL del archivo en Azure Blob Storage
+   * @param blobName Nombre del blob en Azure Storage
+   * @param correlationId Identificador único para correlacionar mensajes
+   * @param eventType Tipo de evento (e.g., 'analysis', 'save')
+   */
   private async sendAnalysisMessage(fileUrl: string, blobName: string, correlationId: string, eventType: string) {
     const message: ServiceBusMessage = {
       body: {
@@ -157,6 +170,7 @@ export class MaterialService {
     });
   }
 
+  /**  * Maneja la respuesta de IA: guarda el material si es válido, o elimina el blob si no lo es */
   private async handleResponse(
     response: RespuestaIADto,
     ctx: {
@@ -202,6 +216,7 @@ export class MaterialService {
     }
   }
 
+  /**  * Elimina un blob de Azure Storage de forma segura, registrando errores si ocurren */
   private async deleteBlobSafe(blobName: string, correlationId: string) {
     try {
       const blockBlobClient = this.containerClient.getBlockBlobClient(blobName);
@@ -215,7 +230,12 @@ export class MaterialService {
       this.logger.error(`Error eliminando blob ${blobName}:`, err as any);
     }
   }
-
+  
+  /**
+   * Guarda un material y sus etiquetas asociadas en la base de datos.
+   * @param material Objeto Material a guardar
+   * @param tags Lista de etiquetas asociadas al material
+   */
   async guardarMaterial(material: Material, tags: string[]) {
     // Usamos upsert para actualizar el registro provisional creado antes del upload
     await this.prisma.materiales.create({
@@ -252,6 +272,7 @@ export class MaterialService {
     }
   }
 
+  /**  * Envía una notificación a los estudiantes sobre un nuevo material subido */
   async enviarNotificacionNuevoMaterial(response: RespuestaIADto) {
     const cuerpo : NotificationDto= {
       rol: 'estudiante',

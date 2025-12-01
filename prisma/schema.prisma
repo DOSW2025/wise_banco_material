@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider = "postgresql"
 }
 
 model Calificaciones {
@@ -58,22 +58,31 @@ model Tags {
 
 
 model usuarios {
-  id                                  String          @id
-  email                               String          @unique
+  id                                  String               @id
+  email                               String               @unique
   nombre                              String
   apellido                            String
   telefono                            String?
   biografia                           String?
-  semestre                            Int             @default(1)
-  google_id                           String?         @unique
+  semestre                            Int                  @default(1)
+  google_id                           String?              @unique
   avatar_url                          String?
-  rol_id                              Int             @default(1)
-  estado_id                           Int             @default(1)
+  rol_id                              Int                  @default(1)
+  estado_id                           Int                  @default(1)
   ultimo_login                        DateTime?
   disponibilidad                      Json?
-  created_at                          DateTime        @default(now())
+  created_at                          DateTime             @default(now())
   updated_at                          DateTime
   Materiales                          Materiales[]
+  mensaje_chat                        mensaje_chat[]
+  miembro_grupo_chat                  miembro_grupo_chat[]
+  notifications                       notifications[]
+  rating                              rating[]
+  tutor_profile                       tutor_profile?
+  tutoria_tutoria_studentIdTousuarios tutoria[]            @relation("tutoria_studentIdTousuarios")
+  tutoria_tutoria_tutorIdTousuarios   tutoria[]            @relation("tutoria_tutorIdTousuarios")
+  estados_usuario                     estados_usuario      @relation(fields: [estado_id], references: [id])
+  roles                               roles                @relation(fields: [rol_id], references: [id])
 
   @@index([email])
   @@index([estado_id])
