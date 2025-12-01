@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger, ConflictException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { ServiceBusClient, ServiceBusMessage } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { envs } from '../config';
@@ -10,6 +10,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
+import { CreateMaterialDto } from './dto/create-material.dto';
+import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 
 @Injectable()
 export class MaterialService {
@@ -71,7 +73,7 @@ export class MaterialService {
   /**
    * Envía un PDF a IA y espera su respuesta vía correlationId
    */
-  async validateMaterial(pdfBuffer: Buffer, originalName: string, userId: string, descripcion?: string): Promise<RespuestaIADto> {
+  async validateMaterial(pdfBuffer: Buffer, originalName: string, materialData: CreateMaterialDto): Promise<CreateMaterialResponseDto> {
     const correlationId = uuid();
     this.logger.log(`Iniciando validación de material (correlationId=${correlationId})`);
 
@@ -84,13 +86,12 @@ export class MaterialService {
     const existingMaterial = await this.prisma.materiales.findFirst({
       where: { hash },
     });
-    if (!existingMaterial) { 
-      this.logger.log(`No se encontró material con el mismo hash, continuando... (correlationId=${correlationId})`);
-    }else{
-      throw new ConflictException(
-        `Este archivo ya existe en el sistema (ID: ${existingMaterial?.id})`
-      );
-    } 
+    if (existingMaterial) {
+      this.logger.warn(`Material duplicado detectado (correlationId=${correlationId})`);
+      throw new ConflictException('Material already exists with same content');
+    }
+    
+    this.logger.log(`No se encontro material con el mismo hash, continuando... (correlationId=${correlationId})`); 
     
     //Subir al blob
     const blobName = `${correlationId}-${filename}`.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -115,18 +116,17 @@ export class MaterialService {
     //Esperar respuesta
     const response: RespuestaIADto = await this.waitForResponse(correlationId);
 
-    //Manejar respuesta (guardar o eliminar)
-    await this.handleResponse(response, {
+    //Manejar respuesta (guardar o eliminar) y retornar metadata del material
+    const materialResponse = await this.handleResponse(response, {
       correlationId,
       filename,
       blobName,
-      userId,
-      descripcion,
+      materialData,
       fileUrl,
       hash,
     });
 
-    return response;
+    return materialResponse;
   }
 
   /**
@@ -165,8 +165,18 @@ export class MaterialService {
   }
 
   private waitForResponse(correlationId: string): Promise<RespuestaIADto> {
-    return new Promise<RespuestaIADto>((resolve) => {
-      this.pendingRequests.set(correlationId, resolve);
+    return new Promise<RespuestaIADto>((resolve, reject) => {
+      // Timeout de 15 segundos
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(correlationId);
+        reject(new BadRequestException('Timeout: No se recibio respuesta de IA en 15 segundos'));
+      }, 15000);
+
+      // Resolver con la respuesta de IA y limpiar timeout
+      this.pendingRequests.set(correlationId, (response: RespuestaIADto) => {
+        clearTimeout(timeout);
+        resolve(response);
+      });
     });
   }
 
@@ -177,13 +187,12 @@ export class MaterialService {
       correlationId: string;
       filename: string;
       blobName: string;
-      userId: string;
-      descripcion?: string;
+      materialData: CreateMaterialDto;
       fileUrl: string;
       hash: string;
     },
-  ) {
-    const { correlationId, filename, blobName, userId, descripcion, hash } = ctx;
+  ): Promise<CreateMaterialResponseDto> {
+    const { correlationId, filename, blobName, materialData, hash } = ctx;
     if (response.valid) {
       this.logger.log(`Material validado como VÁLIDO por IA (correlationId=${correlationId})`);
       try {
@@ -191,9 +200,9 @@ export class MaterialService {
           {
             id: correlationId,
             nombre: filename,
-            userId: userId,
+            userId: materialData.userId,
             url: `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`,
-            descripcion: descripcion,
+            descripcion: materialData.description,
             vistos: 0,
             descargas: 0,
             createdAt: new Date(),
@@ -204,6 +213,17 @@ export class MaterialService {
         );
         this.sendAnalysisMessage('', blobName, correlationId, 'save');
         await this.enviarNotificacionNuevoMaterial(response);
+        
+        // Retornar respuesta exitosa 201 con formato especificado
+        return {
+          id: correlationId,
+          title: materialData.title,
+          description: materialData.description,
+          subject: materialData.subject,
+          filename,
+          fileUrl: `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`,
+          createdAt: new Date(),
+        };
       } catch (err) {
         this.logger.error('Error guardando material válido:', err as any);
         // intentar limpiar blob si el guardado falla
@@ -213,6 +233,7 @@ export class MaterialService {
     } else {
       this.logger.log(`Material validado como NO VÁLIDO por IA (correlationId=${correlationId})`);
       await this.deleteBlobSafe(blobName, correlationId);
+      throw new UnprocessableEntityException('PDF falló la validación automatizada');
     }
   }
 
