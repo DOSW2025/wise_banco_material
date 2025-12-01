@@ -420,5 +420,22 @@ export class MaterialService {
     };
   }
 
+  /**
+   * Incrementa el contador de vistas de un material
+   */
+  async incrementViews(materialId: string): Promise<void> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    
+    if (!material) {
+      throw new BadRequestException(`Material con ID ${materialId} no encontrado`);
+    }
+
+    await this.prisma.materiales.update({
+      where: { id: materialId },
+      data: { vistos: { increment: 1 } },
+    });
+  }
 
 }

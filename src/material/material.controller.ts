@@ -194,4 +194,30 @@ export class MaterialController {
     // top 10 fijo temporal
     return this.materialService.getPopularMaterials(limit ?? 10);
   }
+
+  /**
+   * Endpoint para incrementar el contador de vistas de un material.
+   */
+  @Post(':id/view')
+  @ApiOperation({
+    summary: 'Incrementar vistas de material',
+    description: 'Incrementa en 1 el contador de vistas del material especificado.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material',
+    example: 'material-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Vista registrada correctamente.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Material no encontrado.',
+  })
+  async incrementViews(@Param('id') id: string): Promise<{ message: string }> {
+    await this.materialService.incrementViews(id);
+    return { message: 'Vista registrada' };
+  }
 }
