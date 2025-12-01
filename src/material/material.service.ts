@@ -420,5 +420,50 @@ export class MaterialService {
     };
   }
 
+  /**
+   * Busca materiales por palabra clave, materia o autor
+   */
+  async searchMaterials(
+    palabraClave?: string,
+    materia?: string,
+    autor?: string,
+  ): Promise<MaterialDto[]> {
+    const whereConditions: any = {};
+
+    // Filtro por palabra clave (busca en nombre y descripción)
+    if (palabraClave) {
+      whereConditions.OR = [
+        { nombre: { contains: palabraClave, mode: 'insensitive' } },
+        { descripcion: { contains: palabraClave, mode: 'insensitive' } },
+      ];
+    }
+
+    // Filtro por autor (userId)
+    if (autor) {
+      whereConditions.userId = autor;
+    }
+
+    // Filtro por materia (busca en tags)
+    const materiales = await this.prisma.Materiales.findMany({
+      where: whereConditions,
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Si hay filtro de materia, filtrar por tag
+    let materialesFiltrados = materiales;
+    if (materia) {
+      materialesFiltrados = materiales.filter((m: any) =>
+        m.tag?.some((t: any) =>
+          t.Tags?.tag.toLowerCase().includes(materia.toLowerCase()),
+        ),
+      );
+    }
+
+    return materialesFiltrados.map((m: any) => this.toMaterialDto(m));
+  }
 
 }

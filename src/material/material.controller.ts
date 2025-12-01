@@ -7,6 +7,7 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
+import { SearchMaterialsDto } from './dto/search-materials.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -193,5 +194,25 @@ export class MaterialController {
   async getPopularMaterials(@Query('limit') limit?: number): Promise<MaterialDto[]> {
     // top 10 fijo temporal
     return this.materialService.getPopularMaterials(limit ?? 10);
+  }
+
+  @Get('search')
+  @ApiOperation({
+    summary: 'Buscar materiales',
+    description:
+      'Busca materiales por palabra clave (en título y descripción), materia (tags) o autor (userId).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de materiales que coinciden con los filtros.',
+    type: MaterialDto,
+    isArray: true,
+  })
+  async searchMaterials(@Query() filters: SearchMaterialsDto): Promise<MaterialDto[]> {
+    return this.materialService.searchMaterials(
+      filters.palabraClave,
+      filters.materia,
+      filters.autor,
+    );
   }
 }
