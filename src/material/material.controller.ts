@@ -194,4 +194,74 @@ export class MaterialController {
     // top 10 fijo temporal
     return this.materialService.getPopularMaterials(limit ?? 10);
   }
+
+  /**
+   * Endpoint para descargar un material específico.
+   *
+   * Cumple con las siguientes reglas de negocio:
+   * - RN-026-1: Incrementa el contador de descargas del material
+   * - RN-026-3: Registra un evento de descarga en analytics vía RabbitMQ
+   *
+   * Operaciones:
+   * 1. Valida que el material exista
+   * 2. Incrementa el contador de descargas
+   * 3. Registra el evento en analytics
+   * 4. Retorna la URL del archivo para descargar
+   *
+   * @param materialId - ID del material a descargar
+   * @param userId - ID del usuario que descarga (query parameter requerido)
+   * @returns Objeto con la URL del archivo para descargar
+   */
+  @Get(':id/download')
+  @ApiOperation({
+    summary: 'Descargar un material',
+    description:
+      'Permite descargar un material específico. Incrementa automáticamente el contador de descargas y registra un evento en analytics.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material a descargar',
+    example: 'material-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Descarga iniciada. Retorna la URL del archivo.',
+    schema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'URL del archivo para descargar',
+          example: 'https://storage.blob.core.windows.net/materials/file.pdf',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Material no existe o parámetros inválidos.',
+  })
+  async downloadMaterial(
+    @Param('id') materialId: string,
+    @Query('userId') userId?: string,
+  ): Promise<{ url: string }> {
+    // Validar que userId sea proporcionado
+    if (!userId) {
+      throw new BadRequestException(
+        'El parámetro "userId" es requerido para registrar la descarga en analytics',
+      );
+    }
+
+    this.logger.log(
+      `Solicitud de descarga del material ${materialId} por usuario ${userId}`,
+    );
+
+    // Obtener información de la solicitud (opcional para analytics)
+    // En un escenario real, podrías usar @Req() para obtener clientIp y userAgent
+    // const clientIp = req.ip;
+    // const userAgent = req.headers['user-agent'];
+
+    return this.materialService.downloadMaterial(materialId, userId);
+  }
 }
+
