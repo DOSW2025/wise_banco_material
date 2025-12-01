@@ -12,6 +12,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     permissions:
       contents: read #This is required for actions/checkout
 
@@ -62,4 +64,5 @@ jobs:
           app-name: 'eciwise-bancoMaterial'
           slot-name: 'Production'
           package: .
+
           
