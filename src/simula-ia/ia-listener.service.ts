@@ -23,6 +23,18 @@ export class IAListener {
   listen() {
     this.receiver.subscribe({
       processMessage: async (msg) => {
+        this.logger.log(`Mensaje recibido con correlationId: ${msg.correlationId}`);
+        this.logger.log(`Subject: ${msg.subject}`);
+        this.logger.log(`Body: ${JSON.stringify(msg.body)}`);
+
+        // Verificar el tipo de mensaje segun subject
+        if (msg.subject === 'save') {
+          // Mensaje de guardado, solo logging
+          this.logger.log('Mensaje de tipo "save" recibido, no requiere respuesta');
+          return;
+        }
+
+        // Mensaje de analisis (subject === 'analysis')
         let buffer: Buffer | null = null;
 
         try {
@@ -30,11 +42,19 @@ export class IAListener {
           if (msg.body?.compressed && msg.body?.file) {
             const compressed = Buffer.from(msg.body.file, 'base64');
             buffer = inflateSync(compressed);
+            this.logger.log('PDF descomprimido exitosamente');
           }
-
           // Caso 2: Viene normal (base64 sin comprimir)
           else if (msg.body?.file) {
             buffer = Buffer.from(msg.body.file, 'base64');
+            this.logger.log('PDF decodificado desde base64');
+          }
+          // Caso 3: Viene con fileUrl (nuevo formato)
+          else if (msg.body?.fileUrl) {
+            this.logger.log(`PDF disponible en: ${msg.body.fileUrl}`);
+            // En produccion, aqui descargarias el PDF desde la URL
+            // Por ahora, simulamos que lo procesamos
+            buffer = Buffer.from('simulated-pdf-content');
           }
         } catch (err) {
           this.logger.error(

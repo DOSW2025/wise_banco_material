@@ -1,10 +1,12 @@
-import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe,} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
+import { CreateMaterialDto } from './dto/create-material.dto';
+import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -27,14 +29,16 @@ export class MaterialController {
   /**
    * Endpoint para subir un nuevo material en formato PDF.
    *
-   * Reglas de validación:
-   * - El archivo es obligatorio y debe venir en el campo `file`.
-   * - El archivo debe ser de tipo `application/pdf`.
-   * - El campo `userId` es obligatorio en el cuerpo de la petición.
-   * - Opcionalmente puede venir una `descripcion` del material.
+   * Reglas de validacion:
+   * - title: obligatorio, minimo 3 caracteres
+   * - description: opcional, maximo 300 caracteres
+   * - subject: obligatorio
+   * - file: obligatorio, tipo PDF
+   * - userId: obligatorio y debe existir en la tabla User
    */
   @Post()
   @UseInterceptors(FileInterceptor('file'))
+  @UsePipes(new ValidationPipe({ transform: true }))
   @ApiOperation({
     summary: 'Subir un nuevo material PDF',
     description:
@@ -52,35 +56,58 @@ export class MaterialController {
           format: 'binary',
           description: 'Archivo PDF a subir (campo `file`).',
         },
+        title: {
+          type: 'string',
+          description: 'Titulo del material (minimo 3 caracteres).',
+          example: 'Introduccion a Calculo Diferencial',
+          minLength: 3,
+        },
+        description: {
+          type: 'string',
+          description: 'Descripcion opcional del material (maximo 300 caracteres).',
+          example: 'Material de estudio para primer parcial',
+          maxLength: 300,
+          nullable: true,
+        },
+        subject: {
+          type: 'string',
+          description: 'Materia o tema del material.',
+          example: 'Matematicas',
+        },
         userId: {
           type: 'string',
           description: 'ID del usuario al que se asocia el material.',
           example: 'user-123',
         },
-        descripcion: {
-          type: 'string',
-          description: 'Descripción opcional del material.',
-          example: 'Apuntes de cálculo para primer parcial.',
-          nullable: true,
-        },
       },
-      required: ['file', 'userId'],
+      required: ['file', 'title', 'subject', 'userId'],
     },
   })
   @ApiResponse({
     status: 201,
     description: 'Material subido y registrado correctamente.',
+    type: CreateMaterialResponseDto,
   })
   @ApiResponse({
     status: 400,
     description:
-      'Petición inválida. Puede deberse a falta de archivo, tipo de archivo incorrecto o ausencia de userId.',
+      'Validacion fallida. Campos invalidos o archivo no es PDF.',
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Material ya existe con el mismo contenido.',
+  })
+  @ApiResponse({
+    status: 422,
+    description:
+      'PDF fallo la validacion automatizada de IA.',
   })
   async subirNuevoMaterial(
     @UploadedFile() file: any,
-    @Body() body: { userId: string; descripcion?: string },
-  ) {
-    // Validación: debe enviarse un archivo
+    @Body() body: CreateMaterialDto,
+  ): Promise<CreateMaterialResponseDto> {
+    // Validacion: debe enviarse un archivo
     if (!file) {
       throw new BadRequestException(
         'Archivo PDF requerido en el campo "file"',
@@ -92,26 +119,23 @@ export class MaterialController {
       throw new BadRequestException('Solo se permiten archivos PDF');
     }
 
-    // Validación: userId es obligatorio
-    if (!body?.userId) {
-      throw new BadRequestException('Campo "userId" es requerido');
+    // Validacion: userId debe existir en la base de datos
+    const userExists = await this.prisma.usuarios.findUnique({ 
+      where: { id: body.userId } 
+    });
+    if (!userExists) {
+      throw new BadRequestException(`El userId ${body.userId} no existe en la base de datos`);
     }
 
-    // Validación de existencia del usuario (opcional: descomentarlo si ya tienes la tabla/relación correcta)
-    // if ((await this.prisma.usuarios.findUnique({ where: { id: body.userId } })) == null) {
-    //   throw new BadRequestException(`El userId ${body.userId} no existe en la base de datos`);
-    // }
-
     this.logger.log(
-      `Recibido archivo '${file.originalname}' de tamaño ${file.size} bytes para el usuario ${body.userId}, iniciando validación...`,
+      `Recibido archivo '${file.originalname}' de tamaño ${file.size} bytes para el usuario ${body.userId}, iniciando validacion...`,
     );
 
-    // Pasamos al servicio el buffer del archivo, el nombre original, el userId y la descripción opcional
+    // Pasar al servicio el buffer del archivo y metadata validada
     const result = await this.materialService.validateMaterial(
       file.buffer,
       file.originalname,
-      body.userId,
-      body.descripcion,
+      body,
     );
 
     return result;
