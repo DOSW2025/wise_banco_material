@@ -74,15 +74,6 @@ model usuarios {
   created_at                          DateTime             @default(now())
   updated_at                          DateTime
   Materiales                          Materiales[]
-  mensaje_chat                        mensaje_chat[]
-  miembro_grupo_chat                  miembro_grupo_chat[]
-  notifications                       notifications[]
-  rating                              rating[]
-  tutor_profile                       tutor_profile?
-  tutoria_tutoria_studentIdTousuarios tutoria[]            @relation("tutoria_studentIdTousuarios")
-  tutoria_tutoria_tutorIdTousuarios   tutoria[]            @relation("tutoria_tutorIdTousuarios")
-  estados_usuario                     estados_usuario      @relation(fields: [estado_id], references: [id])
-  roles                               roles                @relation(fields: [rol_id], references: [id])
 
   @@index([email])
   @@index([estado_id])

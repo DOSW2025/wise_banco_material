@@ -8,7 +8,8 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "node dist/main",
+    "postinstall": "echo '[POSTINSTALL] Generating Prisma Client...' && node node_modules/prisma/build/index.js generate && echo '✅ [POSTINSTALL] Prisma Client generated successfully!'",
+    "start": "echo '[START] Generating Prisma Client...' && node node_modules/prisma/build/index.js generate && echo '🔄 [START] Running Prisma migrations...' && node node_modules/prisma/build/index.js migrate deploy && echo '🚀 [START] Starting application...' && node dist/src/main",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
