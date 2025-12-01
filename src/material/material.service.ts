@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
-import { CreateMaterialDto } from './dto/create-material.dto';
+import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 
 @Injectable()
@@ -73,28 +73,25 @@ export class MaterialService {
   /**
    * Envía un PDF a IA y espera su respuesta vía correlationId
    */
-  async validateMaterial(pdfBuffer: Buffer, originalName: string, materialData: CreateMaterialDto): Promise<CreateMaterialResponseDto> {
+  async validateMaterial(pdfBuffer: Buffer, materialData: CreateMaterialDto): Promise<CreateMaterialResponseDto> {
     const correlationId = uuid();
-    this.logger.log(`Iniciando validación de material (correlationId=${correlationId})`);
 
     // Calcular hash (SHA-256) y crear registro provisional en BD para evitar duplicados
-    const filename = originalName ?? 'file.pdf';
+    const filename = materialData.title;
     const hash = createHash('sha256').update(pdfBuffer).digest('hex');
-    this.logger.log(`Hash calculado: ${hash} (correlationId=${correlationId})`);
+    this.logger.log(`Hash calculado: ${hash}`);
 
     // Verificar si ya existe un material con el mismo hash
     const existingMaterial = await this.prisma.materiales.findFirst({
       where: { hash },
     });
     if (existingMaterial) {
-      this.logger.warn(`Material duplicado detectado (correlationId=${correlationId})`);
+      this.logger.warn(`Material duplicado detectado`);
       throw new ConflictException('Material already exists with same content');
-    }
-    
-    this.logger.log(`No se encontro material con el mismo hash, continuando... (correlationId=${correlationId})`); 
+    } 
     
     //Subir al blob
-    const blobName = `${correlationId}-${filename}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blobName = `${correlationId}-${filename}`;
     let fileUrl: string;
     try {
       fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
@@ -117,7 +114,8 @@ export class MaterialService {
     const response: RespuestaIADto = await this.waitForResponse(correlationId);
 
     //Manejar respuesta (guardar o eliminar) y retornar metadata del material
-    const materialResponse = await this.handleResponse(response, {
+    const materialResponse = await this.handleResponse(response, 
+      materialData.subject,{
       correlationId,
       filename,
       blobName,
@@ -160,7 +158,7 @@ export class MaterialService {
       subject: eventType,
       contentType: 'application/json',
     };
-    this.logger.log('PDF subido a Blob Storage, enviando mensaje a IA...');
+    this.logger.log(`enviando mensaje a IA...${eventType}, correlationId = ${correlationId}`);
     await this.sender.sendMessages(message);
   }
 
@@ -183,6 +181,7 @@ export class MaterialService {
   /**  * Maneja la respuesta de IA: guarda el material si es válido, o elimina el blob si no lo es */
   private async handleResponse(
     response: RespuestaIADto,
+    subject: string,
     ctx: {
       correlationId: string;
       filename: string;
@@ -210,6 +209,7 @@ export class MaterialService {
             hash: hash,
           },
           response.tags,
+          subject
         );
         this.sendAnalysisMessage('', blobName, correlationId, 'save');
         await this.enviarNotificacionNuevoMaterial(response);
@@ -231,9 +231,17 @@ export class MaterialService {
         throw new BadRequestException('Error guardando material válido');
       }
     } else {
-      this.logger.log(`Material validado como NO VÁLIDO por IA (correlationId=${correlationId})`);
+      const reason = response.reason;
+      this.logger.log(
+        `Material validado como NO VÁLIDO por IA (correlationId=${correlationId})${
+          reason ? ` - motivo: ${reason}` : ''
+        }`
+      );
       await this.deleteBlobSafe(blobName, correlationId);
-      throw new UnprocessableEntityException('PDF falló la validación automatizada');
+      const message = reason
+        ? `PDF falló la validación automatizada: ${reason}`
+        : 'PDF falló la validación automatizada';
+      throw new UnprocessableEntityException(message);
     }
   }
 
@@ -257,19 +265,21 @@ export class MaterialService {
    * @param material Objeto Material a guardar
    * @param tags Lista de etiquetas asociadas al material
    */
-  async guardarMaterial(material: Material, tags: string[]) {
+  async guardarMaterial(material: Material, tags: string[], subject: string) {
     // Usamos upsert para actualizar el registro provisional creado antes del upload
     await this.prisma.materiales.create({
       data: material,
     });
     this.logger.log(`Material guardado/actualizado en base de datos con id=${material.id}`);
     //lógica para manejar las etiquetas (tags)
-    await this.guardarTags(tags, material.id);
+    await this.guardarTags(tags, material.id, subject);
   }
 
-  async guardarTags(tags: string[], materialId: string) {
-    if (tags && tags.length > 0) {
-      for (const tag of tags) {
+  /**  * Guarda las etiquetas asociadas a un material, creando nuevas si es necesario */
+  async guardarTags(tags: string[], materialId: string, subject: string) {
+    const allTags = tags.concat([subject]);
+    if (allTags && allTags.length > 0) {
+      for (const tag of allTags) {
         // Verificar si la etiqueta ya existe
         let etiqueta = await this.prisma.tags.findUnique({
           where: { tag: tag },

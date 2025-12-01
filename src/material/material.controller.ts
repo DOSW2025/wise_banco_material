@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
-import { CreateMaterialDto } from './dto/create-material.dto';
+import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 
 /**
@@ -127,15 +127,12 @@ export class MaterialController {
       throw new BadRequestException(`El userId ${body.userId} no existe en la base de datos`);
     }
 
-    this.logger.log(
-      `Recibido archivo '${file.originalname}' de tamaño ${file.size} bytes para el usuario ${body.userId}, iniciando validacion...`,
-    );
+    this.logger.log(`Archivo '${file.originalname}' de tamaño ${file.size} bytes para el usuario ${body.userId}`,);
 
     // Pasar al servicio el buffer del archivo y metadata validada
     const result = await this.materialService.validateMaterial(
       file.buffer,
-      file.originalname,
-      body,
+      body
     );
 
     return result;
