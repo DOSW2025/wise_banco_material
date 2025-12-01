@@ -28,6 +28,7 @@
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.2.3",
+    "@prisma/adapter-pg": "^7.0.1",
     "@prisma/client": "^7.0.1",
     "@prisma/config": "^7.0.1",
     "amqplib": "^0.10.9",
@@ -77,10 +78,19 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "collectCoverage": true,
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.service.ts",
+      "**/*.controller.ts",
+      "common/base-bus.service.ts",
+      "!prisma/prisma.service.ts"
     ],
     "coverageDirectory": "../coverage",
+    "coverageReporters": [
+      "html",
+      "text",
+      "lcov"
+    ],
     "testEnvironment": "node"
   }
 }
