@@ -1,8 +1,9 @@
-import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe,} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
+import type { Response, Request } from 'express';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
@@ -225,7 +226,7 @@ export class MaterialController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Descarga iniciada. Retorna la URL del archivo.',
+    description: 'Descarga iniciada. Muestra opción para descargar el archivo.',
     schema: {
       type: 'object',
       properties: {
@@ -241,27 +242,36 @@ export class MaterialController {
     status: 400,
     description: 'Material no existe o parámetros inválidos.',
   })
-  async downloadMaterial(
-    @Param('id') materialId: string,
-    @Query('userId') userId?: string,
-  ): Promise<{ url: string }> {
-    // Validar que userId sea proporcionado
-    if (!userId) {
-      throw new BadRequestException(
-        'El parámetro "userId" es requerido para registrar la descarga en analytics',
-      );
-    }
+  async downloadMaterial(@Param('id') materialId: string, @Res() res: Response, @Req() req: Request) {
+    this.logger.log(`Solicitud de descarga del material ${materialId}`);
 
-    this.logger.log(
-      `Solicitud de descarga del material ${materialId} por usuario ${userId}`,
-    );
+    // Obtener clientIp y userAgent para analytics
+    const clientIp = req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
+    const userAgent = req.get('user-agent') || '';
 
-    // Obtener información de la solicitud (opcional para analytics)
-    // En un escenario real, podrías usar @Req() para obtener clientIp y userAgent
-    // const clientIp = req.ip;
-    // const userAgent = req.headers['user-agent'];
+    // Solicitar stream y metadatos al servicio
+    const { stream, contentType, filename } = await this.materialService.getMaterialStream(materialId, {
+      clientIp,
+      userAgent,
+    });
 
-    return this.materialService.downloadMaterial(materialId, userId);
+    // Preparar cabeceras y pipear el stream al cliente
+    res.setHeader('Content-Type', contentType);
+    // Forzar descarga con nombre de archivo
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+
+    // Manejar errores en el stream
+    stream.on('error', (err) => {
+      this.logger.error(`Error streaming file ${materialId}: ${err?.message ?? err}`);
+      if (!res.headersSent) {
+        res.status(500).send('Error descargando el archivo');
+      } else {
+        res.end();
+      }
+    });
+
+    // Iniciar piping
+    (stream as NodeJS.ReadableStream).pipe(res);
   }
 }
 
