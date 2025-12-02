@@ -629,6 +629,55 @@ export class MaterialService {
       tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
     };
   }
+
+  /**
+   * Obtiene la información detallada de un material específico.
+   * Retorna metadata completa, calificación promedio y URL de previsualización.
+   *
+   * @param materialId - ID del material a obtener
+   * @returns Objeto con metadata, calificación y previewURL
+   */
+  async getMaterialDetail(materialId: string): Promise<any> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+        usuarios: { select: { nombre: true } },
+      },
+    });
+
+    if (!material) {
+      throw new NotFoundException(`Material con id ${materialId} no encontrado`);
+    }
+
+    // Calcular calificación promedio
+    const calificacionPromedio =
+      material.Calificaciones && material.Calificaciones.length > 0
+        ? material.Calificaciones.reduce(
+            (acc: number, c: any) => acc + c.calificacion,
+            0,
+          ) / material.Calificaciones.length
+        : null;
+
+    return {
+      metadata: {
+        id: material.id,
+        nombre: material.nombre,
+        descripcion: material.descripcion,
+        userId: material.userId,
+        userName: material.usuarios?.nombre,
+        vistos: material.vistos,
+        descargas: material.descargas,
+        createdAt: material.createdAt,
+        updatedAt: material.updatedAt,
+        tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
+      },
+      calificación: calificacionPromedio,
+      previewURL: material.url,
+    };
+  }
+
     /**   * Incrementa el contador de vistas de un material específico.
    */
   private async incrementDownloads(materialId: string): Promise<void> {
