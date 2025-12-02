@@ -12,6 +12,7 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
+import { MaterialStatsDto } from './dto/material-stats.dto';
 
 @Injectable()
 export class MaterialService {
@@ -420,5 +421,62 @@ export class MaterialService {
     };
   }
 
+  /**
+   * Incrementa el contador de vistas de un material
+   */
+  async incrementViews(materialId: string): Promise<void> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    
+    if (!material) {
+      throw new BadRequestException(`Material con ID ${materialId} no encontrado`);
+    }
+
+    await this.prisma.materiales.update({
+      where: { id: materialId },
+      data: { vistos: { increment: 1 } },
+    });
+  }
+
+  /**
+   * Obtiene las estadísticas de un material específico
+   */
+  async getMaterialStats(materialId: string): Promise<MaterialStatsDto> {
+    const material = await this.prisma.Materiales.findUnique({
+      where: { id: materialId },
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+      },
+    });
+
+    if (!material) {
+      throw new BadRequestException(`Material con id ${materialId} no encontrado`);
+    }
+
+    const calificacionPromedio =
+      material.Calificaciones && material.Calificaciones.length > 0
+        ? material.Calificaciones.reduce(
+            (acc: number, c: any) => acc + c.calificacion,
+            0,
+          ) / material.Calificaciones.length
+        : undefined;
+
+    const totalComentarios = material.Calificaciones?.filter(
+      (c: any) => c.comentario,
+    ).length ?? 0;
+
+    return {
+      id: material.id,
+      nombre: material.nombre,
+      descargas: material.descargas,
+      vistos: material.vistos,
+      calificacionPromedio,
+      totalComentarios,
+      createdAt: material.createdAt,
+      tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
+    };
+  }
 
 }
