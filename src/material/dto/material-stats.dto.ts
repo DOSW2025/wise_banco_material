@@ -3,13 +3,13 @@ import { ApiProperty } from '@nestjs/swagger';
 export class MaterialStatsDto {
   @ApiProperty({
     description: 'ID del material',
-    example: 'abc123-def456',
+    example: '6c56eb98-990f-4b64-a02e-0d84389b3939',
   })
   id: string;
 
   @ApiProperty({
     description: 'Nombre del material',
-    example: 'Cálculo Diferencial - Guía de ejercicios',
+    example: 'DOSW',
   })
   nombre: string;
 
