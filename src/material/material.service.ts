@@ -574,6 +574,7 @@ export class MaterialService {
     };
 
     return response;
+  }
       
    /*
    * Obtiene un stream legible del blob del material y realiza las tareas

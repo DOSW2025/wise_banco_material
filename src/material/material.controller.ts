@@ -241,7 +241,7 @@ export class MaterialController {
       rating,
       comentario,
     );
-
+  }
 
   /**
    * Endpoint para filtrar materiales con filtros avanzados y paginación.
