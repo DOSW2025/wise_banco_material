@@ -1,11 +1,11 @@
-import { Injectable, BadRequestException, Logger, ConflictException, UnprocessableEntityException } from '@nestjs/common';
-import { ServiceBusClient, ServiceBusMessage } from '@azure/service-bus';
+import { Injectable, BadRequestException, Logger, ConflictException, UnprocessableEntityException, NotFoundException } from '@nestjs/common';
+import { ServiceBusClient, ServiceBusMessage, ServiceBusAdministrationClient } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
+import { createHash } from 'node:crypto';
 import { envs } from '../config';
 import { RespuestaIADto } from './dto/respuestIA.dto';
 import { NotificationDto } from 'src/material/dto/notificacion.dto';
 import { v4 as uuid } from 'uuid';
-import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
 import { MaterialDto } from './dto/material.dto';
@@ -21,17 +21,25 @@ export class MaterialService {
   private sender;              // Cola donde enviamos los PDFs
   private notification;        // Cola opcional para envío de mails
   private responseReceiver;    // Cola donde recibimos respuestas
-  private blobServiceClient: BlobServiceClient;
-  private containerClient: any;
+  private readonly adminClient?: ServiceBusAdministrationClient;
+  private analyticsQueueEnsured = false;
+  private readonly blobServiceClient: BlobServiceClient;
+  private readonly containerClient: any;
   private readonly containerName = 'materials';
   
   // Mapa que guarda promesas pendientes por correlationId
-  private pendingRequests: Map<string, (msg: RespuestaIADto) => void> = new Map();
+  private readonly pendingRequests: Map<string, (msg: RespuestaIADto) => void> = new Map();
 
-  constructor(private readonly client: ServiceBusClient, private prisma: PrismaService) {
+  constructor(private readonly client: ServiceBusClient, private readonly prisma: PrismaService) {
     this.sender = this.client.createSender('material.process');
     this.notification = this.client.createSender('mail.envio.rol');
     this.responseReceiver = this.client.createReceiver('material.responses');
+    // Admin client para operaciones de administración (crear/consultar queues)
+    try {
+      this.adminClient = new ServiceBusAdministrationClient(envs.serviceBusConnectionString);
+    } catch (err) {
+      this.logger.warn('No se pudo inicializar ServiceBusAdministrationClient: ' + (err as Error).message);
+    }
     // Inicializar BlobServiceClient
     this.blobServiceClient = BlobServiceClient.fromConnectionString(envs.blobStorageConnectionString);
     this.containerClient = this.blobServiceClient.getContainerClient(this.containerName);
@@ -41,6 +49,78 @@ export class MaterialService {
     });
 
     this.listenForResponses();
+    // Programar envío semanal de top materiales cada lunes
+    this.scheduleWeeklyTopMaterials();
+  }
+
+  /**
+   * Programa la tarea semanal para enviar el top 5 de materiales cada lunes a las 08:00.
+   */
+  private scheduleWeeklyTopMaterials() {
+    const runWeekly = async () => {
+      try {
+        await this.sendWeeklyTopMaterialsEmail();
+      } catch (err) {
+        this.logger.error('Error enviando top materials semanal:', err as any);
+      }
+    };
+
+    const nextMondayAt8 = this.getNextWeekdayDate(1, 8, 0, 0); // 1 = Monday
+    const now = new Date();
+    const initialDelay = nextMondayAt8.getTime() - now.getTime();
+
+    // Si por alguna razón el delay es negativo, ejecutar inmediatamente
+    const safeInitialDelay = initialDelay > 0 ? initialDelay : 0;
+
+    // Programar la primera ejecución
+    setTimeout(() => {
+      // Ejecutar la tarea y luego programar intervalos semanales
+      runWeekly();
+      setInterval(runWeekly, 7 * 24 * 60 * 60 * 1000); // 7 días
+    }, safeInitialDelay);
+  }
+
+  /**
+   * Retorna la próxima fecha del día de la semana dado (0=Sunday,1=Monday...) a la hora especificada.
+   */
+  private getNextWeekdayDate(weekday: number, hour = 8, minute = 0, second = 0): Date {
+    const now = new Date();
+    const result = new Date(now);
+    result.setHours(hour, minute, second, 0);
+    const diff = (weekday + 7 - result.getDay()) % 7;
+    if (diff === 0 && result.getTime() <= now.getTime()) {
+      // Ya pasó la hora de hoy, programar para la próxima semana
+      result.setDate(result.getDate() + 7);
+    } else if (diff > 0) {
+      result.setDate(result.getDate() + diff);
+    }
+    return result;
+  }
+
+  /**
+   * Obtiene los top N materiales y envía una notificación por correo con el listado.
+   */
+  private async sendWeeklyTopMaterialsEmail() {
+    this.logger.log('Preparando envío semanal de top materiales...');
+    const topMaterials = await this.getPopularMaterials(5);
+
+    const resumen = `Top ${topMaterials.length} materiales de la semana`;
+
+    const cuerpo: any = {
+      rol: 'estudiante',
+      template: 'top5Semanal',
+      resumen,
+      guardar: false,
+      mandarCorreo: true,
+      topMaterials: topMaterials.map((m) => ({ id: m.userId,userName: m.userName, title: m.nombre, url: m.url, views: m.vistos, downloads: m.descargas })),
+    };
+
+    const message: ServiceBusMessage = {
+      body: cuerpo,
+    };
+
+    await this.notification.sendMessages(message);
+    this.logger.log('Envío semanal de top materiales encolado');
   }
 
   /**
@@ -354,7 +434,7 @@ export class MaterialService {
 
     // Calificación global: promedio sobre todas las calificaciones de todos los materiales del usuario
     const todasLasCalificaciones = materiales.flatMap(
-      (m: any) => m.calificaciones ?? [],
+      (m: any) => m.Calificaciones ?? [],
     );
 
     const calificacionPromedio =
@@ -384,10 +464,11 @@ export class MaterialService {
         { vistos: 'desc' },
         { createdAt: 'desc' },
       ],
-      take: limit,
+      take: Number(limit),
       include: {
         MaterialTags: { include: { Tags: true } },
         Calificaciones: true,
+        usuarios: { select: { nombre: true } },
       },
     });
 
@@ -398,31 +479,102 @@ export class MaterialService {
    * Mapea el modelo de Prisma al DTO de salida para listas.
    */
   private toMaterialDto(material: any): MaterialDto {
+    // calcular promedio usando la relación exacta devuelta por Prisma: Calificaciones
     const promedio =
-      material.calificaciones && material.calificaciones.length > 0
-        ? material.calificaciones.reduce(
+      material.Calificaciones && material.Calificaciones.length > 0
+        ? material.Calificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / material.calificaciones.length
+          ) / material.Calificaciones.length
         : undefined;
 
     return {
       id: material.id,
       nombre: material.nombre,
       userId: material.userId,
-      url: material.url, 
+      userName: material.usuarios?.nombre ?? undefined,
+      url: material.url,
       descripcion: material.descripcion,
       vistos: material.vistos,
       descargas: material.descargas,
       createdAt: material.createdAt,
       updatedAt: material.updatedAt,
-      tags: material.tag?.map((t: any) => t.Tags?.tag) ?? [],
+      tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
       calificacionPromedio: promedio,
     };
   }
 
   /**
-   * Incrementa el contador de vistas de un material
+   * Obtiene un stream legible del blob del material y realiza las tareas
+   * asociadas a la descarga (incremento de contador y evento analytics).
+   *
+   * Devuelve el stream y metadatos para que el controlador lo sirva al cliente.
+   */
+  async downloadMaterial(materialId: string) {
+    this.logger.log(`Preparando stream para material ${materialId}`);
+
+    // 1. Buscar material
+    const material = await this.prisma.materiales.findUnique({ where: { id: materialId } });
+    if (!material) {
+      this.logger.warn(`Material no encontrado: ${materialId}`);
+      throw new BadRequestException(`Material con id ${materialId} no existe`);
+    }
+
+    // 2. Preparar acceso al blob y comprobar existencia antes de incrementar
+    try {
+      const url = new URL(material.url);
+      const parts = url.pathname.split('/');
+      const blobName = parts.slice(2).join('/');
+      // Muchos SDKs/URLs codifican caracteres (espacios -> %20). Decodificamos para obtener el nombre real del blob.
+      const decodedBlobName = decodeURIComponent(blobName);
+      let blockBlobClient = this.containerClient.getBlockBlobClient(decodedBlobName);
+
+      const exists = await blockBlobClient.exists();
+      if (!exists) {
+        // Intento rápido: si no existe con el nombre decodificado, probar con el nombre original (codificado)
+        const fallbackClient = this.containerClient.getBlockBlobClient(blobName);
+        const fallbackExists = await fallbackClient.exists();
+        if (fallbackExists) {
+          this.logger.log(`Blob encontrado con nombre codificado para material ${materialId}: ${blobName}`);
+          // usar fallbackClient como cliente final
+          blockBlobClient = fallbackClient;
+        } else {
+          this.logger.warn(`Blob no existe en storage para material ${materialId}: ${decodedBlobName} (decodificado) ni ${blobName} (original)`);
+          throw new NotFoundException('Archivo no encontrado en almacenamiento');
+        }
+      }
+
+      // Descargar/stream del blob
+      const downloadResponse = await blockBlobClient.download();
+      const stream = downloadResponse.readableStreamBody;
+      const contentType = downloadResponse.contentType ?? 'application/pdf';
+      const filename = material.nombre || decodedBlobName.split('/').pop() || 'material.pdf';
+
+      if (!stream) {
+        // Fallback a buffer si el SDK no entrega stream
+        const buffer = await blockBlobClient.downloadToBuffer();
+        const { Readable } = await import('node:stream');
+        const fallbackStream = Readable.from(buffer);
+        return { stream: fallbackStream as NodeJS.ReadableStream, contentType, filename };
+      }
+      //Incrementar contador de descargas (RN-026-1) ahora que el blob existe
+      await this.incrementDownloads(materialId);
+      this.logger.log(`Contador de descargas incrementado para material ${materialId}`);
+
+      return { stream, contentType, filename };
+    } catch (err) {
+      if (err instanceof NotFoundException) {
+        this.logger.error(`Error obteniendo blob para material ${materialId}: ${(err as Error).message}`);
+        throw err;
+      }
+      this.logger.error(`Error obteniendo blob para material ${materialId}: ${(err as Error).message}`);
+      throw new BadRequestException('Error obteniendo archivo de almacenamiento');
+    }
+  }
+
+  
+
+    /**   * Incrementa el contador de vistas de un material específico.
    */
   async incrementViews(materialId: string): Promise<void> {
     const material = await this.prisma.materiales.findUnique({
@@ -432,7 +584,6 @@ export class MaterialService {
     if (!material) {
       throw new BadRequestException(`Material con ID ${materialId} no encontrado`);
     }
-
     await this.prisma.materiales.update({
       where: { id: materialId },
       data: { vistos: { increment: 1 } },
@@ -477,6 +628,20 @@ export class MaterialService {
       createdAt: material.createdAt,
       tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
     };
+    /**   * Incrementa el contador de vistas de un material específico.
+   */
+  async incrementDownloads(materialId: string): Promise<void> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    
+    if (!material) {
+      throw new BadRequestException(`Material con ID ${materialId} no encontrado`);
+    }
+    await this.prisma.materiales.update({
+      where: { id: materialId },
+      data: { descargas: { increment: 1 } },
+    });
   }
 
 }

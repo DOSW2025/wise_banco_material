@@ -1,8 +1,9 @@
-import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe,Res,} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
+import type { Response, Request } from 'express';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
@@ -265,9 +266,32 @@ export class MaterialController {
   }
 
   /**
-   * Endpoint para incrementar el contador de vistas de un material.
+   * Endpoint para descargar un material específico.
+   *
+   * Cumple con las siguientes reglas de negocio:
+   * - RN-026-1: Incrementa el contador de descargas del material
+   * - RN-026-3: Registra un evento de descarga en analytics vía RabbitMQ
+   *
+   * Operaciones:
+   * 1. Valida que el material exista
+   * 2. Incrementa el contador de descargas
+   * 3. Registra el evento en analytics
+   * 4. Retorna la URL del archivo para descargar
+   *
+   * @param materialId - ID del material a descargar
+   * @param userId - ID del usuario que descarga (query parameter requerido)
+   * @returns Objeto con la URL del archivo para descargar
    */
-  @Post(':id/view')
+  @Get(':id/download')
+  @ApiOperation({
+    summary: 'Descargar un material',
+    description:
+      'Permite descargar un material específico. Incrementa automáticamente el contador de descargas y registra un evento en analytics.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material a descargar',
+  })
   @ApiOperation({
     summary: 'Incrementar vistas de material',
     description: 'Incrementa en 1 el contador de vistas del material especificado.',
@@ -279,14 +303,43 @@ export class MaterialController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Vista registrada correctamente.',
+    description: 'Descarga iniciada. Muestra opción para descargar el archivo.',
+    schema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'URL del archivo para descargar',
+          example: 'https://storage.blob.core.windows.net/materials/file.pdf',
+        },
+      },
+    },
   })
   @ApiResponse({
-    status: 404,
-    description: 'Material no encontrado.',
+    status: 400,
+    description: 'Material no existe o parámetros inválidos.',
   })
-  async incrementViews(@Param('id') id: string): Promise<{ message: string }> {
-    await this.materialService.incrementViews(id);
-    return { message: 'Vista registrada' };
+  async downloadMaterial(@Param('id') materialId: string, @Res() res: Response, @Req() req: Request) {
+    this.logger.log(`Solicitud de descarga del material ${materialId}`);
+    
+    // Solicitar stream y metadatos al servicio
+    const { stream, contentType, filename } = await this.materialService.downloadMaterial(materialId);
+
+    // Preparar cabeceras y pipear el stream al cliente
+    res.setHeader('Content-Type', contentType);
+    // Forzar descarga con nombre de archivo
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+
+    // Manejar errores en el stream
+    stream.on('error', (err) => {
+      this.logger.error(`Error streaming file ${materialId}: ${err?.message ?? err}`);
+      if (!res.headersSent) {
+        res.status(500).send('Error descargando el archivo');
+      } else {
+        res.end();
+      }
+    });
+    // Pipear el stream al response
+    stream.pipe(res);
   }
 }
