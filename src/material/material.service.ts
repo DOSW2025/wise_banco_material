@@ -12,7 +12,7 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
-import { MaterialStatsDto } from './dto/material-stats.dto';
+import { MaterialStatsDto } from '../pdf-export/dto/material-stats.dto';
 
 @Injectable()
 export class MaterialService {
@@ -594,7 +594,7 @@ export class MaterialService {
    * Obtiene las estadísticas de un material específico
    */
   async getMaterialStats(materialId: string): Promise<MaterialStatsDto> {
-    const material = await this.prisma.Materiales.findUnique({
+    const material = await this.prisma.materiales.findUnique({
       where: { id: materialId },
       include: {
         MaterialTags: { include: { Tags: true } },
@@ -628,9 +628,10 @@ export class MaterialService {
       createdAt: material.createdAt,
       tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
     };
+  }
     /**   * Incrementa el contador de vistas de un material específico.
    */
-  async incrementDownloads(materialId: string): Promise<void> {
+  private async incrementDownloads(materialId: string): Promise<void> {
     const material = await this.prisma.materiales.findUnique({
       where: { id: materialId },
     });
@@ -643,5 +644,4 @@ export class MaterialService {
       data: { descargas: { increment: 1 } },
     });
   }
-
 }
