@@ -198,6 +198,7 @@ export class MaterialController {
     return this.materialService.getPopularMaterials(limit ?? 10);
   }
 
+
   /**
    * Endpoint para filtrar materiales con filtros avanzados y paginación.
    */
@@ -259,9 +260,7 @@ export class MaterialController {
   @ApiParam({
     name: 'id',
     description: 'ID del material a descargar',
-   * Endpoint para incrementar el contador de vistas de un material.
-   */
-  @Post(':id/view')
+  })
   @ApiOperation({
     summary: 'Incrementar vistas de material',
     description: 'Incrementa en 1 el contador de vistas del material especificado.',
@@ -291,16 +290,9 @@ export class MaterialController {
   })
   async downloadMaterial(@Param('id') materialId: string, @Res() res: Response, @Req() req: Request) {
     this.logger.log(`Solicitud de descarga del material ${materialId}`);
-
-    // Obtener clientIp y userAgent para analytics
-    const clientIp = req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
-    const userAgent = req.get('user-agent') || '';
-
+    
     // Solicitar stream y metadatos al servicio
-    const { stream, contentType, filename } = await this.materialService.getMaterialStream(materialId, {
-      clientIp,
-      userAgent,
-    });
+    const { stream, contentType, filename } = await this.materialService.downloadMaterial(materialId);
 
     // Preparar cabeceras y pipear el stream al cliente
     res.setHeader('Content-Type', contentType);
@@ -316,18 +308,7 @@ export class MaterialController {
         res.end();
       }
     });
-
-    // Iniciar piping
-    (stream as NodeJS.ReadableStream).pipe(res);
-    description: 'Vista registrada correctamente.',
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Material no encontrado.',
-  })
-  async incrementViews(@Param('id') id: string): Promise<{ message: string }> {
-    await this.materialService.incrementViews(id);
-    return { message: 'Vista registrada' };
+    // Pipear el stream al response
+    stream.pipe(res);
   }
 }
-
