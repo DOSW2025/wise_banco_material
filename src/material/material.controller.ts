@@ -2,7 +2,7 @@ import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Lo
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
+import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,ApiQuery} from '@nestjs/swagger';
 import type { Response, Request } from 'express';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
@@ -13,6 +13,7 @@ import { CreateRatingDto } from './dto/create-rating.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { SearchMaterialsDto } from './dto/search-materials.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
+import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -355,4 +356,44 @@ export class MaterialController {
     // Pipear el stream al response
     stream.pipe(res);
   }
+
+  /**
+  * Autocompletado de materiales.
+  *
+  * Busca coincidencias en título, descripción y autor,
+  * retornando un máximo de 5 sugerencias ordenadas por relevancia.
+  */
+  @Get('autocomplete')
+  @ApiOperation({
+    summary: 'Autocompletado de búsqueda de materiales',
+    description:
+      'Busca en título, descripción y autor. Retorna hasta 5 sugerencias ordenadas por relevancia.',
+  })
+  @ApiQuery({
+    name: 'query',
+    required: true,
+    description: 'Cadena ingresada por el usuario',
+  })
+  @ApiQuery({
+    name: 'materia',
+    required: false,
+    description: 'Materia — no disponible actualmente',
+  })
+  @ApiQuery({
+    name: 'autor',
+    required: false,
+    description: 'Filtro opcional por autor',
+  })
+  @ApiResponse({
+    status: 200,
+    type: AutocompleteResponseDto,
+  })
+  async autocompleteMateriales(
+    @Query('query') query: string,
+    @Query('materia') materia?: string,
+    @Query('autor') autor?: string,
+  ): Promise<AutocompleteResponseDto> {
+    return this.materialService.autocompleteMaterials(query, materia, autor);
+  }
+
 }
