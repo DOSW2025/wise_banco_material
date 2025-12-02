@@ -8,6 +8,8 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
+import { SearchMaterialsDto } from './dto/search-materials.dto';
+import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -196,6 +198,41 @@ export class MaterialController {
     return this.materialService.getPopularMaterials(limit ?? 10);
   }
 
+
+  /**
+   * Endpoint para filtrar materiales con filtros avanzados y paginación.
+   */
+  @Get('filter')
+  @ApiOperation({
+    summary: 'Filtrar materiales con filtros avanzados',
+    description:
+      'Filtra materiales por palabra clave, materia, autor, tipo, semestre y calificación mínima con paginación.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado paginado de materiales que coinciden con los filtros.',
+    type: PaginatedMaterialsDto,
+  })
+  async searchMaterials(@Query() filters: SearchMaterialsDto): Promise<PaginatedMaterialsDto> {
+    const { materials, total } = await this.materialService.searchMaterials(
+      filters.palabraClave,
+      filters.materia,
+      filters.autor,
+      filters.tipoMaterial,
+      filters.semestre,
+      filters.calificacionMin,
+      filters.page || 1,
+      filters.size || 10,
+    );
+
+    return {
+      materials,
+      total,
+      page: filters.page || 1,
+      size: filters.size || 10,
+      totalPages: Math.ceil(total / (filters.size || 10)),
+    };
+  }
 
   /**
    * Endpoint para descargar un material específico.
