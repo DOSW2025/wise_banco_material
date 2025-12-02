@@ -629,6 +629,21 @@ export class MaterialService {
       // No lanzar excepción para que la descarga no falle si analytics falla
       this.logger.warn(`Advertencia: Error publicando evento de analytics: ${(error as Error).message}`);
     }
+   * Incrementa el contador de vistas de un material
+   */
+  async incrementViews(materialId: string): Promise<void> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    
+    if (!material) {
+      throw new BadRequestException(`Material con ID ${materialId} no encontrado`);
+    }
+
+    await this.prisma.materiales.update({
+      where: { id: materialId },
+      data: { vistos: { increment: 1 } },
+    });
   }
 
   /**

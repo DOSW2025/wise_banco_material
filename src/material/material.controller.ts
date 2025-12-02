@@ -222,6 +222,16 @@ export class MaterialController {
   @ApiParam({
     name: 'id',
     description: 'ID del material a descargar',
+   * Endpoint para incrementar el contador de vistas de un material.
+   */
+  @Post(':id/view')
+  @ApiOperation({
+    summary: 'Incrementar vistas de material',
+    description: 'Incrementa en 1 el contador de vistas del material especificado.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material',
     example: 'material-123',
   })
   @ApiResponse({
@@ -272,6 +282,15 @@ export class MaterialController {
 
     // Iniciar piping
     (stream as NodeJS.ReadableStream).pipe(res);
+    description: 'Vista registrada correctamente.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Material no encontrado.',
+  })
+  async incrementViews(@Param('id') id: string): Promise<{ message: string }> {
+    await this.materialService.incrementViews(id);
+    return { message: 'Vista registrada' };
   }
 }
 
