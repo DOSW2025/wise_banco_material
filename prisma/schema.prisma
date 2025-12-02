@@ -13,41 +13,17 @@ model Calificaciones {
   calificacion Int
   comentario   String?
   createdAt    DateTime   @default(now())
-  Materiales   Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  Materiales   materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
 }
 
 model MaterialTags {
   idTag      Int
   idMaterial String
-  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  Materiales materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
   Tags       Tags       @relation(fields: [idTag], references: [id], onDelete: Cascade)
 
   @@id([idTag, idMaterial])
   @@index([idMaterial])
-}
-
-model Materiales {
-  id             String           @id
-  nombre         String
-  userId         String
-  url            String
-  descripcion    String?
-  vistos         Int              @default(0)
-  descargas      Int              @default(0)
-  createdAt      DateTime         @default(now())
-  hash           String?          @unique
-  updatedAt      DateTime
-  Calificaciones Calificaciones[]
-  MaterialTags   MaterialTags[]
-  usuarios       usuarios         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  Resumen        Resumen[]
-}
-
-model Resumen {
-  id         Int        @id @default(autoincrement())
-  idMaterial String
-  resumen    String
-  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
 }
 
 model Tags {
@@ -57,31 +33,29 @@ model Tags {
 }
 
 model usuarios {
-  id                                  String               @id
-  email                               String               @unique
+  id                                  String          @id
+  email                               String          @unique
   nombre                              String
   apellido                            String
   telefono                            String?
   biografia                           String?
-  semestre                            Int                  @default(1)
-  google_id                           String?              @unique
+  semestre                            Int             @default(1)
+  google_id                           String?         @unique
   avatar_url                          String?
-  rol_id                              Int                  @default(1)
-  estado_id                           Int                  @default(1)
+  rol_id                              Int             @default(1)
+  estado_id                           Int             @default(1)
   ultimo_login                        DateTime?
   disponibilidad                      Json?
-  created_at                          DateTime             @default(now())
+  created_at                          DateTime        @default(now())
   updated_at                          DateTime
-  Materiales                          Materiales[]
-  mensaje_chat                        mensaje_chat[]
-  miembro_grupo_chat                  miembro_grupo_chat[]
+  materiales                          materiales[]
   notifications                       notifications[]
   rating                              rating[]
   tutor_profile                       tutor_profile?
-  tutoria_tutoria_studentIdTousuarios tutoria[]            @relation("tutoria_studentIdTousuarios")
-  tutoria_tutoria_tutorIdTousuarios   tutoria[]            @relation("tutoria_tutorIdTousuarios")
-  estados_usuario                     estados_usuario      @relation(fields: [estado_id], references: [id])
-  roles                               roles                @relation(fields: [rol_id], references: [id])
+  tutoria_tutoria_studentIdTousuarios tutoria[]       @relation("tutoria_studentIdTousuarios")
+  tutoria_tutoria_tutorIdTousuarios   tutoria[]       @relation("tutoria_tutorIdTousuarios")
+  estados_usuario                     estados_usuario @relation(fields: [estado_id], references: [id])
+  roles                               roles           @relation(fields: [rol_id], references: [id])
 
   @@index([email])
   @@index([estado_id])
@@ -98,18 +72,6 @@ model estados_usuario {
   usuarios    usuarios[]
 }
 
-model grupo_chat {
-  id                 String               @id
-  nombre             String               @unique
-  creadoPor          String
-  fechaCreacion      DateTime             @default(now())
-  fechaActualizacion DateTime
-  mensaje_chat       mensaje_chat[]
-  miembro_grupo_chat miembro_grupo_chat[]
-
-  @@index([nombre])
-}
-
 model materia {
   id            String          @id
   codigo        String          @unique
@@ -119,33 +81,6 @@ model materia {
   tutoria       tutoria[]
 
   @@index([codigo])
-}
-
-model mensaje_chat {
-  id            String     @id
-  grupoId       String
-  usuarioId     String
-  contenido     String
-  fechaCreacion DateTime   @default(now())
-  fechaEdicion  DateTime?
-  grupo_chat    grupo_chat @relation(fields: [grupoId], references: [id], onDelete: Cascade)
-  usuarios      usuarios   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-
-  @@index([grupoId, fechaCreacion])
-  @@index([usuarioId])
-}
-
-model miembro_grupo_chat {
-  id         String     @id
-  grupoId    String
-  usuarioId  String
-  fechaUnion DateTime   @default(now())
-  grupo_chat grupo_chat @relation(fields: [grupoId], references: [id], onDelete: Cascade)
-  usuarios   usuarios   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-
-  @@unique([grupoId, usuarioId])
-  @@index([grupoId])
-  @@index([usuarioId])
 }
 
 model notifications {
@@ -236,6 +171,34 @@ model tutoria {
   @@index([materiaId])
   @@index([status])
   @@index([tutorId, scheduledAt])
+}
+
+model materiales {
+  id             String           @id
+  nombre         String
+  userId         String
+  url            String
+  extension      String
+  descripcion    String?
+  vistos         Int              @default(0)
+  descargas      Int              @default(0)
+  createdAt      DateTime         @default(now())
+  hash           String?          @unique
+  updatedAt      DateTime
+  Calificaciones Calificaciones[]
+  MaterialTags   MaterialTags[]
+  usuarios       usuarios         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumen        resumen[]
+
+  @@index([extension])
+  @@index([userId])
+}
+
+model resumen {
+  id         Int        @id @default(autoincrement())
+  idMaterial String
+  resumen    String
+  materiales materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
 }
 
 enum EstadoSesion {

@@ -135,7 +135,8 @@ export class MaterialController {
     // Pasar al servicio el buffer del archivo y metadata validada
     const result = await this.materialService.validateMaterial(
       file.buffer,
-      body
+      body,
+      file.originalname,
     );
 
     return result;

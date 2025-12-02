@@ -54,4 +54,10 @@ export class MaterialDto {
     example: 12,
   })
   totalComentarios: number;
+
+  @ApiProperty({
+    description: 'Extensión del archivo del material',
+    example: 'pdf',
+  })
+  extension: string;
 }

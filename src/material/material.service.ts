@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, Logger, ConflictException, Unprocessab
 import { ServiceBusClient, ServiceBusMessage, ServiceBusAdministrationClient } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { createHash } from 'node:crypto';
+import * as path from 'path';
 import { envs } from '../config';
 import { RespuestaIADto } from './dto/respuestIA.dto';
 import { NotificationDto } from 'src/material/dto/notificacion.dto';
@@ -154,11 +155,13 @@ export class MaterialService {
   /**
    * Envía un PDF a IA y espera su respuesta vía correlationId
    */
-  async validateMaterial(pdfBuffer: Buffer, materialData: CreateMaterialDto): Promise<CreateMaterialResponseDto> {
+  async validateMaterial(pdfBuffer: Buffer, materialData: CreateMaterialDto, originalName?: string): Promise<CreateMaterialResponseDto> {
     const correlationId = uuid();
 
     // Calcular hash (SHA-256) y crear registro provisional en BD para evitar duplicados
     const filename = materialData.title;
+    // Determinar extension desde el nombre original del archivo si está disponible
+    const extension = originalName ? path.extname(originalName).replace(/^\./, '').toLowerCase() : 'pdf';
     const hash = createHash('sha256').update(pdfBuffer).digest('hex');
     this.logger.log(`Hash calculado: ${hash}`);
 
@@ -195,15 +198,17 @@ export class MaterialService {
     const response: RespuestaIADto = await this.waitForResponse(correlationId);
 
     //Manejar respuesta (guardar o eliminar) y retornar metadata del material
-    const materialResponse = await this.handleResponse(response, 
-      materialData.subject,{
-      correlationId,
-      filename,
-      blobName,
-      materialData,
-      fileUrl,
-      hash,
-    });
+    const materialResponse = await this.handleResponse(response,
+      materialData.subject, {
+        correlationId,
+        filename,
+        blobName,
+        materialData,
+        fileUrl,
+        hash,
+        extension,
+      },
+    );
 
     return materialResponse;
   }
@@ -270,6 +275,7 @@ export class MaterialService {
       materialData: CreateMaterialDto;
       fileUrl: string;
       hash: string;
+      extension: string;
     },
   ): Promise<CreateMaterialResponseDto> {
     const { correlationId, filename, blobName, materialData, hash } = ctx;
@@ -282,6 +288,7 @@ export class MaterialService {
             nombre: filename,
             userId: materialData.userId,
             url: `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`,
+            extension: ctx.extension,
             descripcion: materialData.description,
             vistos: 0,
             descargas: 0,
@@ -494,6 +501,7 @@ export class MaterialService {
       nombre: material.nombre,
       userId: material.userId,
       userName: material.usuarios?.nombre ?? undefined,
+      extension: material.extension,
       url: material.url,
       descripcion: material.descripcion,
       vistos: material.vistos,
@@ -623,7 +631,7 @@ export class MaterialService {
 
     // Filtro por tipo de material (asumiendo que está en el nombre del archivo)
     if (tipoMaterial) {
-      whereConditions.nombre = { contains: tipoMaterial, mode: 'insensitive' };
+      whereConditions.extension = { contains: tipoMaterial, mode: 'insensitive' };
     }
 
     // Filtro por semestre (asumiendo que está en los tags o descripción)
@@ -638,6 +646,7 @@ export class MaterialService {
         include: {
           MaterialTags: { include: { Tags: true } },
           Calificaciones: true,
+          usuarios: { select: { nombre: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip,
