@@ -15,5 +15,6 @@ import { envs } from 'src/config/env';
       },
     },
   ],
+  exports: [MaterialService, ServiceBusClient],
 })
 export class MaterialModule {}

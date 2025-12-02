@@ -1,12 +1,18 @@
-import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe,} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
+import type { Response, Request } from 'express';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
+import { DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+import { CreateRatingDto } from './dto/create-rating.dto';
+import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
+import { SearchMaterialsDto } from './dto/search-materials.dto';
+import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -132,7 +138,8 @@ export class MaterialController {
     // Pasar al servicio el buffer del archivo y metadata validada
     const result = await this.materialService.validateMaterial(
       file.buffer,
-      body
+      body,
+      file.originalname,
     );
 
     return result;
@@ -190,8 +197,162 @@ export class MaterialController {
     type: MaterialDto,
     isArray: true,
   })
-  async getPopularMaterials(@Query('limit') limit?: number): Promise<MaterialDto[]> {
-    // top 10 fijo temporal
-    return this.materialService.getPopularMaterials(limit ?? 10);
+  async getPopularMaterials(
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.getPopularMaterials(limit);
+  }
+  /**
+   * POST /api/material/:id/ratings
+   *
+   * Recibe:
+   * - rating (1-5)
+   * - comentario 
+   * - userId 
+   *
+   */
+  @Post(':id/ratings')
+  @ApiOperation({
+    summary: 'Registrar calificación para un material',
+    description:
+      'Permite registrar una calificación (1-5) y un comentario opcional para un material. ' +
+      'Por ahora no se valida si el usuario ya visualizó o descargó el material.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material a calificar',
+    example: 'mat-1',
+  })
+  @ApiBody({ type: CreateRatingDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Calificación registrada y promedio actualizado.',
+    type: RateMaterialResponseDto,
+  })
+  async rateMaterial(
+    @Param('id') materialId: string,
+    @Body() body: CreateRatingDto,
+  ): Promise<RateMaterialResponseDto> {
+    const { userId, rating, comentario } = body;
+
+    return this.materialService.rateMaterial(
+      materialId,
+      userId,
+      rating,
+      comentario,
+    );
+  }
+
+  /**
+   * Endpoint para filtrar materiales con filtros avanzados y paginación.
+   */
+  @Get('filter')
+  @ApiOperation({
+    summary: 'Filtrar materiales con filtros avanzados',
+    description:
+      'Filtra materiales por palabra clave, materia, autor, tipo, semestre y calificación mínima con paginación.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado paginado de materiales que coinciden con los filtros.',
+    type: PaginatedMaterialsDto,
+  })
+  async searchMaterials(@Query() filters: SearchMaterialsDto): Promise<PaginatedMaterialsDto> {
+    const { materials, total } = await this.materialService.searchMaterials(
+      filters.palabraClave,
+      filters.materia,
+      filters.autor,
+      filters.tipoMaterial,
+      filters.semestre,
+      filters.calificacionMin,
+      filters.page || 1,
+      filters.size || 10,
+    );
+
+    return {
+      materials,
+      total,
+      page: filters.page || 1,
+      size: filters.size || 10,
+      totalPages: Math.ceil(total / (filters.size || 10)),
+    };
+  }
+
+  /**
+   * Endpoint para descargar un material específico.
+   *
+   * Cumple con las siguientes reglas de negocio:
+   * - RN-026-1: Incrementa el contador de descargas del material
+   * - RN-026-3: Registra un evento de descarga en analytics vía RabbitMQ
+   *
+   * Operaciones:
+   * 1. Valida que el material exista
+   * 2. Incrementa el contador de descargas
+   * 3. Registra el evento en analytics
+   * 4. Retorna la URL del archivo para descargar
+   *
+   * @param materialId - ID del material a descargar
+   * @param userId - ID del usuario que descarga (query parameter requerido)
+   * @returns Objeto con la URL del archivo para descargar
+   */
+  @Get(':id/download')
+  @ApiOperation({
+    summary: 'Descargar un material',
+    description:
+      'Permite descargar un material específico. Incrementa automáticamente el contador de descargas y registra un evento en analytics.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material a descargar',
+  })
+  @ApiOperation({
+    summary: 'Incrementar vistas de material',
+    description: 'Incrementa en 1 el contador de vistas del material especificado.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material',
+    example: 'material-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Descarga iniciada. Muestra opción para descargar el archivo.',
+    schema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'URL del archivo para descargar',
+          example: 'https://storage.blob.core.windows.net/materials/file.pdf',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Material no existe o parámetros inválidos.',
+  })
+  async downloadMaterial(@Param('id') materialId: string, @Res() res: Response, @Req() req: Request) {
+    this.logger.log(`Solicitud de descarga del material ${materialId}`);
+    
+    // Solicitar stream y metadatos al servicio
+    const { stream, contentType, filename } = await this.materialService.downloadMaterial(materialId);
+
+    // Preparar cabeceras y pipear el stream al cliente
+    res.setHeader('Content-Type', contentType);
+    // Forzar descarga con nombre de archivo
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
+
+    // Manejar errores en el stream
+    stream.on('error', (err) => {
+      this.logger.error(`Error streaming file ${materialId}: ${err?.message ?? err}`);
+      if (!res.headersSent) {
+        res.status(500).send('Error descargando el archivo');
+      } else {
+        res.end();
+      }
+    });
+    // Pipear el stream al response
+    stream.pipe(res);
   }
 }
