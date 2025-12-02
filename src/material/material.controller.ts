@@ -13,6 +13,7 @@ import { CreateRatingDto } from './dto/create-rating.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { SearchMaterialsDto } from './dto/search-materials.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
+import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -241,6 +242,40 @@ export class MaterialController {
       rating,
       comentario,
     );
+  }
+
+  /**
+   * Endpoint para obtener todas las calificaciones de un material.
+   *
+   * Retorna:
+   * - Listado de todas las calificaciones del material
+   * - Promedio de calificaciones
+   * - Total de calificaciones
+   */
+  @Get(':id/ratings')
+  @ApiOperation({
+    summary: 'Obtener calificaciones de un material',
+    description:
+      'Retorna todas las calificaciones (ratings) registradas para un material específico, junto con el promedio y el total de calificaciones.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material',
+    example: 'mat-1',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de calificaciones y promedio del material.',
+    type: GetMaterialRatingsResponseDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El material no existe.',
+  })
+  async getMaterialRatings(
+    @Param('id') materialId: string,
+  ): Promise<GetMaterialRatingsResponseDto> {
+    return this.materialService.getMaterialRatings(materialId);
   }
 
   /**
