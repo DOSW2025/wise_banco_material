@@ -8,7 +8,6 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
-import { MaterialStatsDto } from '../pdf-export/dto/material-stats.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -197,28 +196,6 @@ export class MaterialController {
     return this.materialService.getPopularMaterials(limit ?? 10);
   }
 
-  /**
-   * Endpoint para obtener estadísticas de un material específico.
-   */
-  @Get(':id/stats')
-  @ApiOperation({
-    summary: 'Obtener estadísticas de un material',
-    description:
-      'Retorna las estadísticas detalladas de un material específico: descargas, vistas, calificación promedio y comentarios.',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'ID del material',
-    example: 'abc123-def456',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Estadísticas del material obtenidas exitosamente.',
-    type: MaterialStatsDto,
-  })
-  async getMaterialStats(@Param('id') id: string): Promise<MaterialStatsDto> {
-    return this.materialService.getMaterialStats(id);
-  }
 
   /**
    * Endpoint para descargar un material específico.

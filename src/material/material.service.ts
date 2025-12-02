@@ -12,7 +12,6 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
-import { MaterialStatsDto } from '../pdf-export/dto/material-stats.dto';
 
 @Injectable()
 export class MaterialService {
@@ -416,6 +415,7 @@ export class MaterialService {
       include: {
         MaterialTags: { include: { Tags: true } },
         Calificaciones: true,
+        usuarios: { select: { nombre: true } },
       },
     });
 
@@ -501,6 +501,7 @@ export class MaterialService {
       updatedAt: material.updatedAt,
       tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
       calificacionPromedio: promedio,
+      totalComentarios: material.Calificaciones.length ?? 0,
     };
   }
 
@@ -593,41 +594,17 @@ export class MaterialService {
   /**
    * Obtiene las estadísticas de un material específico
    */
-  async getMaterialStats(materialId: string): Promise<MaterialStatsDto> {
+  async getMaterialStats(materialId: string): Promise<MaterialDto> {
     const material = await this.prisma.materiales.findUnique({
       where: { id: materialId },
       include: {
         MaterialTags: { include: { Tags: true } },
         Calificaciones: true,
+        usuarios: { select: { nombre: true } },
       },
     });
 
-    if (!material) {
-      throw new BadRequestException(`Material con id ${materialId} no encontrado`);
-    }
-
-    const calificacionPromedio =
-      material.Calificaciones && material.Calificaciones.length > 0
-        ? material.Calificaciones.reduce(
-            (acc: number, c: any) => acc + c.calificacion,
-            0,
-          ) / material.Calificaciones.length
-        : undefined;
-
-    const totalComentarios = material.Calificaciones?.filter(
-      (c: any) => c.comentario,
-    ).length ?? 0;
-
-    return {
-      id: material.id,
-      nombre: material.nombre,
-      descargas: material.descargas,
-      vistos: material.vistos,
-      calificacionPromedio,
-      totalComentarios,
-      createdAt: material.createdAt,
-      tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
-    };
+    return this.toMaterialDto(material);
   }
     /**   * Incrementa el contador de vistas de un material específico.
    */

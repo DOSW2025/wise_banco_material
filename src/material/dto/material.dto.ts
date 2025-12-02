@@ -48,4 +48,10 @@ export class MaterialDto {
     example: 4.5,
   })
   calificacionPromedio?: number;
+
+  @ApiProperty({
+    description: 'Número total de comentarios',
+    example: 12,
+  })
+  totalComentarios: number;
 }
