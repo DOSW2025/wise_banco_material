@@ -13,24 +13,172 @@ model Calificaciones {
   calificacion Int
   comentario   String?
   createdAt    DateTime   @default(now())
-  Materiales   Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  Materiales   materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
 }
 
 model MaterialTags {
   idTag      Int
   idMaterial String
-  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  Materiales materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
   Tags       Tags       @relation(fields: [idTag], references: [id], onDelete: Cascade)
 
   @@id([idTag, idMaterial])
   @@index([idMaterial])
 }
 
-model Materiales {
+model Tags {
+  id           Int            @id @default(autoincrement())
+  tag          String         @unique
+  MaterialTags MaterialTags[]
+}
+
+model usuarios {
+  id                                  String          @id
+  email                               String          @unique
+  nombre                              String
+  apellido                            String
+  telefono                            String?
+  biografia                           String?
+  semestre                            Int             @default(1)
+  google_id                           String?         @unique
+  avatar_url                          String?
+  rol_id                              Int             @default(1)
+  estado_id                           Int             @default(1)
+  ultimo_login                        DateTime?
+  disponibilidad                      Json?
+  created_at                          DateTime        @default(now())
+  updated_at                          DateTime
+  materiales                          materiales[]
+  notifications                       notifications[]
+  rating                              rating[]
+  tutor_profile                       tutor_profile?
+  tutoria_tutoria_studentIdTousuarios tutoria[]       @relation("tutoria_studentIdTousuarios")
+  tutoria_tutoria_tutorIdTousuarios   tutoria[]       @relation("tutoria_tutorIdTousuarios")
+  estados_usuario                     estados_usuario @relation(fields: [estado_id], references: [id])
+  roles                               roles           @relation(fields: [rol_id], references: [id])
+
+  @@index([email])
+  @@index([estado_id])
+  @@index([rol_id])
+}
+
+model estados_usuario {
+  id          Int        @id @default(autoincrement())
+  nombre      String     @unique
+  descripcion String?
+  activo      Boolean    @default(true)
+  created_at  DateTime   @default(now())
+  updated_at  DateTime
+  usuarios    usuarios[]
+}
+
+model materia {
+  id            String          @id
+  codigo        String          @unique
+  nombre        String
+  tema          tema[]
+  tutor_materia tutor_materia[]
+  tutoria       tutoria[]
+
+  @@index([codigo])
+}
+
+model notifications {
+  id            Int      @unique @default(autoincrement())
+  userId        String
+  fechaCreacion DateTime @default(now())
+  asunto        String
+  resumen       String
+  visto         Boolean  @default(false)
+  usuarios      usuarios @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([id, userId])
+}
+
+model rating {
+  id            Int           @id @default(autoincrement())
+  sessionId     String        @unique
+  tutorId       String
+  raterId       String
+  score         Int
+  comment       String?
+  createdAt     DateTime      @default(now())
+  usuarios      usuarios      @relation(fields: [raterId], references: [id])
+  tutoria       tutoria       @relation(fields: [sessionId], references: [id_tutoria], onDelete: Cascade)
+  tutor_profile tutor_profile @relation(fields: [tutorId], references: [id_tutor])
+}
+
+model roles {
+  id          Int        @id @default(autoincrement())
+  nombre      String     @unique
+  descripcion String?
+  activo      Boolean    @default(true)
+  created_at  DateTime   @default(now())
+  updated_at  DateTime
+  usuarios    usuarios[]
+}
+
+model tema {
+  id         String  @id
+  materiaId  String
+  nombreTema String
+  materia    materia @relation(fields: [materiaId], references: [id], onDelete: Cascade)
+
+  @@index([materiaId])
+}
+
+model tutor_materia {
+  id            Int           @id @default(autoincrement())
+  tutorId       String
+  materiaId     String
+  materia       materia       @relation(fields: [materiaId], references: [id], onDelete: Cascade)
+  tutor_profile tutor_profile @relation(fields: [tutorId], references: [id_tutor], onDelete: Cascade)
+
+  @@unique([tutorId, materiaId])
+}
+
+model tutor_profile {
+  id_tutor      String          @id
+  bio           String?
+  reputacion    Float           @default(0)
+  rating        rating[]
+  tutor_materia tutor_materia[]
+  usuarios      usuarios        @relation(fields: [id_tutor], references: [id], onDelete: Cascade)
+}
+
+model tutoria {
+  id_tutoria                           String       @id
+  tutorId                              String
+  studentId                            String
+  materiaId                            String
+  codigoMateria                        String
+  scheduledAt                          DateTime
+  day                                  String
+  startTime                            String
+  endTime                              String
+  mode                                 Modalidad
+  status                               EstadoSesion @default(PENDIENTE)
+  linkConexion                         String?
+  lugar                                String?
+  comentarios                          String?
+  createdAt                            DateTime     @default(now())
+  rating                               rating?
+  materia                              materia      @relation(fields: [materiaId], references: [id])
+  usuarios_tutoria_studentIdTousuarios usuarios     @relation("tutoria_studentIdTousuarios", fields: [studentId], references: [id])
+  usuarios_tutoria_tutorIdTousuarios   usuarios     @relation("tutoria_tutorIdTousuarios", fields: [tutorId], references: [id])
+
+  @@index([codigoMateria])
+  @@index([materiaId])
+  @@index([status])
+  @@index([tutorId, scheduledAt])
+}
+
+model materiales {
   id             String           @id
   nombre         String
   userId         String
   url            String
+  extension      String
   descripcion    String?
   vistos         Int              @default(0)
   descargas      Int              @default(0)
@@ -40,42 +188,28 @@ model Materiales {
   Calificaciones Calificaciones[]
   MaterialTags   MaterialTags[]
   usuarios       usuarios         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  Resumen        Resumen[]
+  resumen        resumen[]
+
+  @@index([extension])
+  @@index([userId])
 }
 
-model Resumen {
+model resumen {
   id         Int        @id @default(autoincrement())
   idMaterial String
   resumen    String
-  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  materiales materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
 }
 
-model Tags {
-  id           Int            @id @default(autoincrement())
-  tag          String         @unique
-  MaterialTags MaterialTags[]
+enum EstadoSesion {
+  PENDIENTE
+  CONFIRMADA
+  CANCELADA
+  COMPLETADA
+  RECHAZADA
 }
 
-
-model usuarios {
-  id                                  String               @id
-  email                               String               @unique
-  nombre                              String
-  apellido                            String
-  telefono                            String?
-  biografia                           String?
-  semestre                            Int                  @default(1)
-  google_id                           String?              @unique
-  avatar_url                          String?
-  rol_id                              Int                  @default(1)
-  estado_id                           Int                  @default(1)
-  ultimo_login                        DateTime?
-  disponibilidad                      Json?
-  created_at                          DateTime             @default(now())
-  updated_at                          DateTime
-  Materiales                          Materiales[]
-
-  @@index([email])
-  @@index([estado_id])
-  @@index([rol_id])
+enum Modalidad {
+  VIRTUAL
+  PRESENCIAL
 }

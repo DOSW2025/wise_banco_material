@@ -33,7 +33,8 @@ export class MaterialDto {
 
   @ApiProperty({ description: 'Fecha de última actualización del material' })
   updatedAt: Date;
-
+  @ApiProperty({ description: 'Nombre del usuario propietario del material' })
+  userName: string;
   @ApiProperty({
     description: 'Etiquetas asociadas al material',
     type: [String],
@@ -47,4 +48,16 @@ export class MaterialDto {
     example: 4.5,
   })
   calificacionPromedio?: number;
+
+  @ApiProperty({
+    description: 'Número total de comentarios',
+    example: 12,
+  })
+  totalComentarios: number;
+
+  @ApiProperty({
+    description: 'Extensión del archivo del material',
+    example: 'pdf',
+  })
+  extension: string;
 }
