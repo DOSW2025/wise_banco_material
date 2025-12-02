@@ -9,6 +9,7 @@ import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { MaterialStatsDto } from '../pdf-export/dto/material-stats.dto';
+import { MaterialDetailDto } from './dto/material-detail.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -218,6 +219,38 @@ export class MaterialController {
   })
   async getMaterialStats(@Param('id') id: string): Promise<MaterialStatsDto> {
     return this.materialService.getMaterialStats(id);
+  }
+
+  /**
+   * Endpoint para obtener la información detallada de un material.
+   *
+   * Retorna:
+   * - metadata: información completa del material
+   * - calificación: calificación promedio (1-5) o null si no tiene calificaciones
+   * - previewURL: URL para acceder/descargar el material
+   */
+  @Get(':id')
+  @ApiOperation({
+    summary: 'Obtener información detallada de un material',
+    description:
+      'Retorna la información completa de un material específico incluyendo metadata, calificación promedio y URL de previsualización.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material',
+    example: 'abc123-def456',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Información del material obtenida exitosamente.',
+    type: MaterialDetailDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El material no existe.',
+  })
+  async getMaterialDetail(@Param('id') id: string): Promise<MaterialDetailDto> {
+    return this.materialService.getMaterialDetail(id);
   }
 
   /**
