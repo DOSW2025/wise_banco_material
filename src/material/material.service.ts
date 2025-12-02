@@ -1,11 +1,11 @@
-import { Injectable, BadRequestException, Logger, ConflictException, UnprocessableEntityException } from '@nestjs/common';
-import { ServiceBusClient, ServiceBusMessage } from '@azure/service-bus';
+import { Injectable, BadRequestException, Logger, ConflictException, UnprocessableEntityException, NotFoundException } from '@nestjs/common';
+import { ServiceBusClient, ServiceBusMessage, ServiceBusAdministrationClient } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
+import { createHash } from 'node:crypto';
 import { envs } from '../config';
 import { RespuestaIADto } from './dto/respuestIA.dto';
 import { NotificationDto } from 'src/material/dto/notificacion.dto';
 import { v4 as uuid } from 'uuid';
-import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Material } from './entities/material.entity';
 import { MaterialDto } from './dto/material.dto';
@@ -21,17 +21,25 @@ export class MaterialService {
   private sender;              // Cola donde enviamos los PDFs
   private notification;        // Cola opcional para envío de mails
   private responseReceiver;    // Cola donde recibimos respuestas
-  private blobServiceClient: BlobServiceClient;
-  private containerClient: any;
+  private readonly adminClient?: ServiceBusAdministrationClient;
+  private analyticsQueueEnsured = false;
+  private readonly blobServiceClient: BlobServiceClient;
+  private readonly containerClient: any;
   private readonly containerName = 'materials';
   
   // Mapa que guarda promesas pendientes por correlationId
-  private pendingRequests: Map<string, (msg: RespuestaIADto) => void> = new Map();
+  private readonly pendingRequests: Map<string, (msg: RespuestaIADto) => void> = new Map();
 
-  constructor(private readonly client: ServiceBusClient, private prisma: PrismaService) {
+  constructor(private readonly client: ServiceBusClient, private readonly prisma: PrismaService) {
     this.sender = this.client.createSender('material.process');
     this.notification = this.client.createSender('mail.envio.rol');
     this.responseReceiver = this.client.createReceiver('material.responses');
+    // Admin client para operaciones de administración (crear/consultar queues)
+    try {
+      this.adminClient = new ServiceBusAdministrationClient(envs.serviceBusConnectionString);
+    } catch (err) {
+      this.logger.warn('No se pudo inicializar ServiceBusAdministrationClient: ' + (err as Error).message);
+    }
     // Inicializar BlobServiceClient
     this.blobServiceClient = BlobServiceClient.fromConnectionString(envs.blobStorageConnectionString);
     this.containerClient = this.blobServiceClient.getContainerClient(this.containerName);
@@ -422,6 +430,206 @@ export class MaterialService {
   }
 
   /**
+   * Descarga un material específico.
+   * 
+   * Cumple con las siguientes reglas de negocio:
+   * - RN-026-1: Incrementa el contador de descargas del material
+   * - RN-026-3: Registra un evento de descarga en analytics vía RabbitMQ
+   * 
+   * Operaciones:
+   * 1. Valida que el material exista en la base de datos
+   * 2. Incrementa el contador de descargas (descargas++)
+   * 3. Envía un evento de analytics a RabbitMQ para registrar la descarga
+   * 4. Retorna la URL del material para su descarga
+   * 
+   * @param materialId - ID del material a descargar
+   * @param userId - ID del usuario que descarga (para analytics)
+   * @param clientIp - Dirección IP del cliente (opcional)
+   * @param userAgent - User agent del cliente (opcional)
+   * @returns Promesa que contiene la URL del archivo para descargar
+   * @throws BadRequestException si el material no existe
+   * @throws Error si falla el registro del evento de analytics
+   */
+  async downloadMaterial(
+    materialId: string,
+    userId: string,
+    clientIp?: string,
+    userAgent?: string,
+  ): Promise<{ url: string }> {
+    this.logger.log(`Iniciando descarga del material ${materialId} por usuario ${userId}`);
+
+    // 1. Validar que el material existe
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+
+    if (!material) {
+      this.logger.warn(`Intento de descarga de material inexistente: ${materialId}`);
+      throw new BadRequestException(`Material con id ${materialId} no existe`);
+    }
+
+    try {
+      // 2. Incrementar contador de descargas (RN-026-1)
+      await this.prisma.materiales.update({
+        where: { id: materialId },
+        data: { descargas: { increment: 1 } },
+      });
+      this.logger.log(`Contador de descargas incrementado para material ${materialId}`);
+
+      // 3. Enviar evento de analytics a RabbitMQ (RN-026-3)
+      await this.publishDownloadAnalyticsEvent(
+        materialId,
+        userId,
+        material.nombre,
+        clientIp,
+        userAgent,
+      );
+
+      // 4. Retornar la URL del material
+      return { url: material.url };
+    } catch (error) {
+      this.logger.error(
+        `Error al procesar descarga del material ${materialId}: ${(error as Error).message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Obtiene un stream legible del blob del material y realiza las tareas
+   * asociadas a la descarga (incremento de contador y evento analytics).
+   *
+   * Devuelve el stream y metadatos para que el controlador lo sirva al cliente.
+   */
+  async getMaterialStream(
+    materialId: string,
+    analyticsCtx?: { userId?: string; clientIp?: string; userAgent?: string },
+  ): Promise<{ stream: NodeJS.ReadableStream; contentType: string; filename: string }> {
+    this.logger.log(`Preparando stream para material ${materialId}`);
+
+    // 1. Buscar material
+    const material = await this.prisma.materiales.findUnique({ where: { id: materialId } });
+    if (!material) {
+      this.logger.warn(`Material no encontrado: ${materialId}`);
+      throw new BadRequestException(`Material con id ${materialId} no existe`);
+    }
+
+    // 2. Preparar acceso al blob y comprobar existencia antes de incrementar
+    try {
+      const url = new URL(material.url);
+      const parts = url.pathname.split('/');
+      const blobName = parts.slice(2).join('/');
+      // Muchos SDKs/URLs codifican caracteres (espacios -> %20). Decodificamos para obtener el nombre real del blob.
+      const decodedBlobName = decodeURIComponent(blobName);
+      let blockBlobClient = this.containerClient.getBlockBlobClient(decodedBlobName);
+
+      const exists = await blockBlobClient.exists();
+      if (!exists) {
+        // Intento rápido: si no existe con el nombre decodificado, probar con el nombre original (codificado)
+        const fallbackClient = this.containerClient.getBlockBlobClient(blobName);
+        const fallbackExists = await fallbackClient.exists();
+        if (fallbackExists) {
+          this.logger.log(`Blob encontrado con nombre codificado para material ${materialId}: ${blobName}`);
+          // usar fallbackClient como cliente final
+          blockBlobClient = fallbackClient;
+        } else {
+          this.logger.warn(`Blob no existe en storage para material ${materialId}: ${decodedBlobName} (decodificado) ni ${blobName} (original)`);
+          throw new NotFoundException('Archivo no encontrado en almacenamiento');
+        }
+      }
+
+      // 3. Incrementar contador de descargas (RN-026-1) ahora que el blob existe
+      await this.prisma.materiales.update({ where: { id: materialId }, data: { descargas: { increment: 1 } } });
+      this.logger.log(`Contador de descargas incrementado para material ${materialId}`);
+
+      // 4. Publicar evento analytics de forma asíncrona (no bloquear la descarga)
+      (async () => {
+        try {
+          await this.publishDownloadAnalyticsEvent(
+            materialId,
+            analyticsCtx?.userId ?? null,
+            material.nombre,
+            analyticsCtx?.clientIp,
+            analyticsCtx?.userAgent,
+          );
+        } catch (err) {
+          this.logger.warn(`Fallo al publicar evento analytics para ${materialId}: ${(err as Error).message}`);
+        }
+      })();
+
+      // 5. Descargar/stream del blob
+      const downloadResponse = await blockBlobClient.download();
+      const stream = downloadResponse.readableStreamBody;
+      const contentType = downloadResponse.contentType ?? 'application/pdf';
+      const filename = material.nombre || decodedBlobName.split('/').pop() || 'material.pdf';
+
+      if (!stream) {
+        // Fallback a buffer si el SDK no entrega stream
+        const buffer = await blockBlobClient.downloadToBuffer();
+        const { Readable } = await import('node:stream');
+        const fallbackStream = Readable.from(buffer);
+        return { stream: fallbackStream as NodeJS.ReadableStream, contentType, filename };
+      }
+
+      return { stream, contentType, filename };
+    } catch (err) {
+      if (err instanceof NotFoundException) {
+        this.logger.error(`Error obteniendo blob para material ${materialId}: ${(err as Error).message}`);
+        throw err;
+      }
+      this.logger.error(`Error obteniendo blob para material ${materialId}: ${(err as Error).message}`);
+      throw new BadRequestException('Error obteniendo archivo de almacenamiento');
+    }
+  }
+
+  /**
+   * Publica un evento de descarga en el bus de mensajes (RabbitMQ/Service Bus)
+   * para el sistema de analytics.
+   * 
+   * Cumple con RN-026-3: Registrar un evento en analytics por cada descarga
+   * 
+   * @param materialId - ID del material descargado
+   * @param userId - ID del usuario que descarga
+   * @param materialName - Nombre del material
+   * @param clientIp - IP del cliente (opcional)
+   * @param userAgent - User agent del cliente (opcional)
+   */
+  private async publishDownloadAnalyticsEvent(
+    materialId: string,
+    userId?: string | null,
+    materialName?: string,
+    clientIp?: string,
+    userAgent?: string,
+  ): Promise<void> {
+    try {
+      // Asegurar que la queue de analytics existe (crearla si es necesario)
+      await this.ensureAnalyticsQueue();
+
+      const analyticsEvent = {
+        materialId,
+        userId: userId ?? null,
+        materialName: materialName ?? null,
+        timestamp: new Date(),
+        eventType: 'download',
+        clientIp: clientIp ?? null,
+        userAgent: userAgent ?? null,
+      };
+
+      const message: ServiceBusMessage = {
+        body: analyticsEvent,
+        subject: 'material.download',
+        contentType: 'application/json',
+      };
+
+      const analyticsSender = this.client.createSender('material.analytics');
+      await analyticsSender.sendMessages(message);
+      await analyticsSender.close();
+
+      this.logger.log(`Evento de descarga publicado en analytics para material ${materialId}`);
+    } catch (error) {
+      // No lanzar excepción para que la descarga no falle si analytics falla
+      this.logger.warn(`Advertencia: Error publicando evento de analytics: ${(error as Error).message}`);
+    }
    * Incrementa el contador de vistas de un material
    */
   async incrementViews(materialId: string): Promise<void> {
@@ -518,4 +726,32 @@ export class MaterialService {
     };
   }
 
+   * Asegura (idempotente) que la queue `material.analytics` exista en el namespace.
+   * Si no puede crear/consultar la queue, registra la advertencia y no lanza.
+   */
+  private async ensureAnalyticsQueue(): Promise<void> {
+    const queueName = 'material.analytics';
+    if (this.analyticsQueueEnsured) return;
+    if (!this.adminClient) {
+      this.logger.warn('AdminClient no disponible; omitido ensureAnalyticsQueue');
+      return;
+    }
+    try {
+      // Intentar obtener información de la queue
+      await this.adminClient.getQueue(queueName);
+      this.analyticsQueueEnsured = true;
+      return;
+    } catch (err) {
+      // Si no existe, crearla
+      try {
+        await this.adminClient.createQueue(queueName);
+        this.analyticsQueueEnsured = true;
+        this.logger.log(`Queue '${queueName}' creada en Service Bus`);
+        return;
+      } catch (error_) {
+        this.logger.warn(`No se pudo crear la queue '${queueName}': ${(error_ as Error).message}`);
+        return;
+      }
+    }
+  }
 }
