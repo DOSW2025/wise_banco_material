@@ -1,0 +1,53 @@
+import { ApiProperty } from '@nestjs/swagger';
+
+export class MaterialStatsDto {
+  @ApiProperty({
+    description: 'ID del material',
+    example: '6c56eb98-990f-4b64-a02e-0d84389b3939',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Nombre del material',
+    example: 'DOSW',
+  })
+  nombre: string;
+
+  @ApiProperty({
+    description: 'Número total de descargas',
+    example: 150,
+  })
+  descargas: number;
+
+  @ApiProperty({
+    description: 'Número total de vistas',
+    example: 320,
+  })
+  vistos: number;
+
+  @ApiProperty({
+    description: 'Calificación promedio del material',
+    example: 4.5,
+    required: false,
+  })
+  calificacionPromedio?: number;
+
+  @ApiProperty({
+    description: 'Número total de comentarios',
+    example: 12,
+  })
+  totalComentarios: number;
+
+  @ApiProperty({
+    description: 'Fecha de creación del material',
+    example: '2025-01-15T10:30:00Z',
+  })
+  createdAt: Date;
+
+  @ApiProperty({
+    description: 'Tags asociados al material',
+    example: ['matematicas', 'calculo', 'derivadas'],
+    type: [String],
+  })
+  tags: string[];
+}
