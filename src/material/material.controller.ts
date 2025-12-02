@@ -198,6 +198,15 @@ export class MaterialController {
     type: MaterialDto,
     isArray: true,
   })
+  @ApiResponse({
+  status: 400,
+  description:
+    'Parámetro `limit` inválido.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
   async getPopularMaterials(
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
   ): Promise<MaterialDto[]> {
@@ -229,6 +238,20 @@ export class MaterialController {
     status: 201,
     description: 'Calificación registrada y promedio actualizado.',
     type: RateMaterialResponseDto,
+  })
+  @ApiResponse({
+  status: 400,
+  description:
+    'Datos inválidos.',
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Material o usuario no encontrado.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
   })
   async rateMaterial(
     @Param('id') materialId: string,
@@ -387,6 +410,15 @@ export class MaterialController {
   @ApiResponse({
     status: 200,
     type: AutocompleteResponseDto,
+  })
+  @ApiResponse({
+  status: 400,
+  description:
+    'Parámetros inválidos. Ocurre, por ejemplo, si la palabra clave está vacía.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
   })
   async autocompleteMateriales(
     @Query('query') query: string,
