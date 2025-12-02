@@ -12,6 +12,7 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
+import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 
 @Injectable()
 export class MaterialService {
@@ -436,6 +437,85 @@ export class MaterialService {
       where: { id: materialId },
       data: { vistos: { increment: 1 } },
     });
+  }
+
+  /**
+   * Busca materiales con filtros avanzados y paginación
+   */
+  async searchMaterials(
+    palabraClave?: string,
+    materia?: string,
+    autor?: string,
+    tipoMaterial?: string,
+    semestre?: number,
+    calificacionMin?: number,
+    page: number = 1,
+    size: number = 10,
+  ): Promise<{ materials: MaterialDto[]; total: number }> {
+    const whereConditions: any = {};
+    const skip = (page - 1) * size;
+
+    // Filtro por palabra clave (busca en nombre y descripción)
+    if (palabraClave) {
+      whereConditions.OR = [
+        { nombre: { contains: palabraClave, mode: 'insensitive' } },
+        { descripcion: { contains: palabraClave, mode: 'insensitive' } },
+      ];
+    }
+
+    // Filtro por autor (userId)
+    if (autor) {
+      whereConditions.userId = autor;
+    }
+
+    // Filtro por tipo de material (asumiendo que está en el nombre del archivo)
+    if (tipoMaterial) {
+      whereConditions.nombre = { contains: tipoMaterial, mode: 'insensitive' };
+    }
+
+    // Filtro por semestre (asumiendo que está en los tags o descripción)
+    if (semestre) {
+      whereConditions.descripcion = { contains: semestre.toString(), mode: 'insensitive' };
+    }
+
+    // Obtener materiales con paginación
+    const [materiales, total] = await Promise.all([
+      this.prisma.materiales.findMany({
+        where: whereConditions,
+        include: {
+          MaterialTags: { include: { Tags: true } },
+          Calificaciones: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: size,
+      }),
+      this.prisma.materiales.count({ where: whereConditions }),
+    ]);
+
+    // Filtrar por materia (tags) y calificación mínima
+    let materialesFiltrados = materiales;
+    
+    if (materia) {
+      materialesFiltrados = materialesFiltrados.filter((m: any) =>
+        m.MaterialTags?.some((mt: any) =>
+          mt.Tags?.tag.toLowerCase().includes(materia.toLowerCase()),
+        ),
+      );
+    }
+
+    if (calificacionMin) {
+      materialesFiltrados = materialesFiltrados.filter((m: any) => {
+        if (!m.Calificaciones || m.Calificaciones.length === 0) return false;
+        const promedio = m.Calificaciones.reduce((acc: number, c: any) => acc + c.calificacion, 0) / m.Calificaciones.length;
+        return promedio >= calificacionMin;
+      });
+    }
+
+    return {
+      materials: materialesFiltrados.map((m: any) => this.toMaterialDto(m)),
+      total: materialesFiltrados.length,
+    };
   }
 
 }
