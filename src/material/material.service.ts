@@ -13,6 +13,7 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
+import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 
 @Injectable()
@@ -515,6 +516,66 @@ export class MaterialService {
   }
 
   /**
+   * Registra una calificación para un material y devuelve el promedio actualizado.
+   */
+  async rateMaterial(
+    materialId: string,
+    userId: string,
+    rating: number,
+    comentario?: string | null,
+  ): Promise<RateMaterialResponseDto> {
+    if (rating < 1 || rating > 5) {
+      throw new BadRequestException('La calificación debe estar entre 1 y 5');
+    }
+
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    if (!material) {
+      this.logger.warn(
+        `Intento de calificar material inexistente: ${materialId} (userId=${userId})`,
+      );
+      throw new NotFoundException('Material no encontrado');
+    }
+
+    const usuario = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!usuario) {
+      this.logger.warn(
+        `Intento de calificar por usuario inexistente: ${userId} (materialId=${materialId})`,
+      );
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    await this.prisma.calificaciones.create({
+      data: {
+        idMaterial: materialId,
+        calificacion: rating,
+        comentario: comentario ?? undefined,
+      },
+    });
+
+    const aggregate = await this.prisma.calificaciones.aggregate({
+      where: { idMaterial: materialId },
+      _avg: { calificacion: true },
+      _count: { _all: true },
+    });
+
+    const promedio = aggregate._avg.calificacion ?? 0;
+    const totalCalificaciones = aggregate._count._all;
+
+    const response: RateMaterialResponseDto = {
+      materialId,
+      rating,
+      comentario: comentario ?? null,
+      calificacionPromedio: promedio,
+      totalCalificaciones,
+    };
+
+    return response;
+      
+   /*
    * Obtiene un stream legible del blob del material y realiza las tareas
    * asociadas a la descarga (incremento de contador y evento analytics).
    *

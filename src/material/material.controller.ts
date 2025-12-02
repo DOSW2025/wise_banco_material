@@ -8,6 +8,9 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
+import { DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+import { CreateRatingDto } from './dto/create-rating.dto';
+import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { SearchMaterialsDto } from './dto/search-materials.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 
@@ -194,10 +197,50 @@ export class MaterialController {
     type: MaterialDto,
     isArray: true,
   })
-  async getPopularMaterials(@Query('limit') limit?: number): Promise<MaterialDto[]> {
-    // top 10 fijo temporal
-    return this.materialService.getPopularMaterials(limit ?? 10);
+  async getPopularMaterials(
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.getPopularMaterials(limit);
   }
+  /**
+   * POST /api/material/:id/ratings
+   *
+   * Recibe:
+   * - rating (1-5)
+   * - comentario 
+   * - userId 
+   *
+   */
+  @Post(':id/ratings')
+  @ApiOperation({
+    summary: 'Registrar calificación para un material',
+    description:
+      'Permite registrar una calificación (1-5) y un comentario opcional para un material. ' +
+      'Por ahora no se valida si el usuario ya visualizó o descargó el material.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material a calificar',
+    example: 'mat-1',
+  })
+  @ApiBody({ type: CreateRatingDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Calificación registrada y promedio actualizado.',
+    type: RateMaterialResponseDto,
+  })
+  async rateMaterial(
+    @Param('id') materialId: string,
+    @Body() body: CreateRatingDto,
+  ): Promise<RateMaterialResponseDto> {
+    const { userId, rating, comentario } = body;
+
+    return this.materialService.rateMaterial(
+      materialId,
+      userId,
+      rating,
+      comentario,
+    );
 
 
   /**
