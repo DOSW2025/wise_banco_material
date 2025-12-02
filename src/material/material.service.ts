@@ -48,6 +48,78 @@ export class MaterialService {
     });
 
     this.listenForResponses();
+    // Programar envío semanal de top materiales cada lunes
+    this.scheduleWeeklyTopMaterials();
+  }
+
+  /**
+   * Programa la tarea semanal para enviar el top 5 de materiales cada lunes a las 08:00.
+   */
+  private scheduleWeeklyTopMaterials() {
+    const runWeekly = async () => {
+      try {
+        await this.sendWeeklyTopMaterialsEmail();
+      } catch (err) {
+        this.logger.error('Error enviando top materials semanal:', err as any);
+      }
+    };
+
+    const nextMondayAt8 = this.getNextWeekdayDate(1, 8, 0, 0); // 1 = Monday
+    const now = new Date();
+    const initialDelay = nextMondayAt8.getTime() - now.getTime();
+
+    // Si por alguna razón el delay es negativo, ejecutar inmediatamente
+    const safeInitialDelay = initialDelay > 0 ? initialDelay : 0;
+
+    // Programar la primera ejecución
+    setTimeout(() => {
+      // Ejecutar la tarea y luego programar intervalos semanales
+      runWeekly();
+      setInterval(runWeekly, 7 * 24 * 60 * 60 * 1000); // 7 días
+    }, safeInitialDelay);
+  }
+
+  /**
+   * Retorna la próxima fecha del día de la semana dado (0=Sunday,1=Monday...) a la hora especificada.
+   */
+  private getNextWeekdayDate(weekday: number, hour = 8, minute = 0, second = 0): Date {
+    const now = new Date();
+    const result = new Date(now);
+    result.setHours(hour, minute, second, 0);
+    const diff = (weekday + 7 - result.getDay()) % 7;
+    if (diff === 0 && result.getTime() <= now.getTime()) {
+      // Ya pasó la hora de hoy, programar para la próxima semana
+      result.setDate(result.getDate() + 7);
+    } else if (diff > 0) {
+      result.setDate(result.getDate() + diff);
+    }
+    return result;
+  }
+
+  /**
+   * Obtiene los top N materiales y envía una notificación por correo con el listado.
+   */
+  private async sendWeeklyTopMaterialsEmail() {
+    this.logger.log('Preparando envío semanal de top materiales...');
+    const topMaterials = await this.getPopularMaterials(5);
+
+    const resumen = `Top ${topMaterials.length} materiales de la semana`;
+
+    const cuerpo: any = {
+      rol: 'estudiante',
+      template: 'top5Semanal',
+      resumen,
+      guardar: false,
+      mandarCorreo: true,
+      topMaterials: topMaterials.map((m) => ({ id: m.userId,userName: m.userName, title: m.nombre, url: m.url, views: m.vistos, downloads: m.descargas })),
+    };
+
+    const message: ServiceBusMessage = {
+      body: cuerpo,
+    };
+
+    await this.notification.sendMessages(message);
+    this.logger.log('Envío semanal de top materiales encolado');
   }
 
   /**
@@ -361,7 +433,7 @@ export class MaterialService {
 
     // Calificación global: promedio sobre todas las calificaciones de todos los materiales del usuario
     const todasLasCalificaciones = materiales.flatMap(
-      (m: any) => m.calificaciones ?? [],
+      (m: any) => m.Calificaciones ?? [],
     );
 
     const calificacionPromedio =
@@ -391,10 +463,11 @@ export class MaterialService {
         { vistos: 'desc' },
         { createdAt: 'desc' },
       ],
-      take: limit,
+      take: Number(limit),
       include: {
         MaterialTags: { include: { Tags: true } },
         Calificaciones: true,
+        usuarios: { select: { nombre: true } },
       },
     });
 
@@ -405,93 +478,29 @@ export class MaterialService {
    * Mapea el modelo de Prisma al DTO de salida para listas.
    */
   private toMaterialDto(material: any): MaterialDto {
+    // calcular promedio usando la relación exacta devuelta por Prisma: Calificaciones
     const promedio =
-      material.calificaciones && material.calificaciones.length > 0
-        ? material.calificaciones.reduce(
+      material.Calificaciones && material.Calificaciones.length > 0
+        ? material.Calificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / material.calificaciones.length
+          ) / material.Calificaciones.length
         : undefined;
 
     return {
       id: material.id,
       nombre: material.nombre,
       userId: material.userId,
-      url: material.url, 
+      userName: material.usuarios?.nombre ?? undefined,
+      url: material.url,
       descripcion: material.descripcion,
       vistos: material.vistos,
       descargas: material.descargas,
       createdAt: material.createdAt,
       updatedAt: material.updatedAt,
-      tags: material.tag?.map((t: any) => t.Tags?.tag) ?? [],
+      tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
       calificacionPromedio: promedio,
     };
-  }
-
-  /**
-   * Descarga un material específico.
-   * 
-   * Cumple con las siguientes reglas de negocio:
-   * - RN-026-1: Incrementa el contador de descargas del material
-   * - RN-026-3: Registra un evento de descarga en analytics vía RabbitMQ
-   * 
-   * Operaciones:
-   * 1. Valida que el material exista en la base de datos
-   * 2. Incrementa el contador de descargas (descargas++)
-   * 3. Envía un evento de analytics a RabbitMQ para registrar la descarga
-   * 4. Retorna la URL del material para su descarga
-   * 
-   * @param materialId - ID del material a descargar
-   * @param userId - ID del usuario que descarga (para analytics)
-   * @param clientIp - Dirección IP del cliente (opcional)
-   * @param userAgent - User agent del cliente (opcional)
-   * @returns Promesa que contiene la URL del archivo para descargar
-   * @throws BadRequestException si el material no existe
-   * @throws Error si falla el registro del evento de analytics
-   */
-  async downloadMaterial(
-    materialId: string,
-    userId: string,
-    clientIp?: string,
-    userAgent?: string,
-  ): Promise<{ url: string }> {
-    this.logger.log(`Iniciando descarga del material ${materialId} por usuario ${userId}`);
-
-    // 1. Validar que el material existe
-    const material = await this.prisma.materiales.findUnique({
-      where: { id: materialId },
-    });
-
-    if (!material) {
-      this.logger.warn(`Intento de descarga de material inexistente: ${materialId}`);
-      throw new BadRequestException(`Material con id ${materialId} no existe`);
-    }
-
-    try {
-      // 2. Incrementar contador de descargas (RN-026-1)
-      await this.prisma.materiales.update({
-        where: { id: materialId },
-        data: { descargas: { increment: 1 } },
-      });
-      this.logger.log(`Contador de descargas incrementado para material ${materialId}`);
-
-      // 3. Enviar evento de analytics a RabbitMQ (RN-026-3)
-      await this.publishDownloadAnalyticsEvent(
-        materialId,
-        userId,
-        material.nombre,
-        clientIp,
-        userAgent,
-      );
-
-      // 4. Retornar la URL del material
-      return { url: material.url };
-    } catch (error) {
-      this.logger.error(
-        `Error al procesar descarga del material ${materialId}: ${(error as Error).message}`,
-      );
-      throw error;
-    }
   }
 
   /**
@@ -500,10 +509,7 @@ export class MaterialService {
    *
    * Devuelve el stream y metadatos para que el controlador lo sirva al cliente.
    */
-  async getMaterialStream(
-    materialId: string,
-    analyticsCtx?: { userId?: string; clientIp?: string; userAgent?: string },
-  ): Promise<{ stream: NodeJS.ReadableStream; contentType: string; filename: string }> {
+  async downloadMaterial(materialId: string) {
     this.logger.log(`Preparando stream para material ${materialId}`);
 
     // 1. Buscar material
@@ -537,26 +543,7 @@ export class MaterialService {
         }
       }
 
-      // 3. Incrementar contador de descargas (RN-026-1) ahora que el blob existe
-      await this.prisma.materiales.update({ where: { id: materialId }, data: { descargas: { increment: 1 } } });
-      this.logger.log(`Contador de descargas incrementado para material ${materialId}`);
-
-      // 4. Publicar evento analytics de forma asíncrona (no bloquear la descarga)
-      (async () => {
-        try {
-          await this.publishDownloadAnalyticsEvent(
-            materialId,
-            analyticsCtx?.userId ?? null,
-            material.nombre,
-            analyticsCtx?.clientIp,
-            analyticsCtx?.userAgent,
-          );
-        } catch (err) {
-          this.logger.warn(`Fallo al publicar evento analytics para ${materialId}: ${(err as Error).message}`);
-        }
-      })();
-
-      // 5. Descargar/stream del blob
+      // Descargar/stream del blob
       const downloadResponse = await blockBlobClient.download();
       const stream = downloadResponse.readableStreamBody;
       const contentType = downloadResponse.contentType ?? 'application/pdf';
@@ -569,6 +556,9 @@ export class MaterialService {
         const fallbackStream = Readable.from(buffer);
         return { stream: fallbackStream as NodeJS.ReadableStream, contentType, filename };
       }
+      //Incrementar contador de descargas (RN-026-1) ahora que el blob existe
+      await this.incrementDownloads(materialId);
+      this.logger.log(`Contador de descargas incrementado para material ${materialId}`);
 
       return { stream, contentType, filename };
     } catch (err) {
@@ -581,55 +571,9 @@ export class MaterialService {
     }
   }
 
-  /**
-   * Publica un evento de descarga en el bus de mensajes (RabbitMQ/Service Bus)
-   * para el sistema de analytics.
-   * 
-   * Cumple con RN-026-3: Registrar un evento en analytics por cada descarga
-   * 
-   * @param materialId - ID del material descargado
-   * @param userId - ID del usuario que descarga
-   * @param materialName - Nombre del material
-   * @param clientIp - IP del cliente (opcional)
-   * @param userAgent - User agent del cliente (opcional)
-   */
-  private async publishDownloadAnalyticsEvent(
-    materialId: string,
-    userId?: string | null,
-    materialName?: string,
-    clientIp?: string,
-    userAgent?: string,
-  ): Promise<void> {
-    try {
-      // Asegurar que la queue de analytics existe (crearla si es necesario)
-      await this.ensureAnalyticsQueue();
+  
 
-      const analyticsEvent = {
-        materialId,
-        userId: userId ?? null,
-        materialName: materialName ?? null,
-        timestamp: new Date(),
-        eventType: 'download',
-        clientIp: clientIp ?? null,
-        userAgent: userAgent ?? null,
-      };
-
-      const message: ServiceBusMessage = {
-        body: analyticsEvent,
-        subject: 'material.download',
-        contentType: 'application/json',
-      };
-
-      const analyticsSender = this.client.createSender('material.analytics');
-      await analyticsSender.sendMessages(message);
-      await analyticsSender.close();
-
-      this.logger.log(`Evento de descarga publicado en analytics para material ${materialId}`);
-    } catch (error) {
-      // No lanzar excepción para que la descarga no falle si analytics falla
-      this.logger.warn(`Advertencia: Error publicando evento de analytics: ${(error as Error).message}`);
-    }
-   * Incrementa el contador de vistas de un material
+    /**   * Incrementa el contador de vistas de un material específico.
    */
   async incrementViews(materialId: string): Promise<void> {
     const material = await this.prisma.materiales.findUnique({
@@ -639,40 +583,26 @@ export class MaterialService {
     if (!material) {
       throw new BadRequestException(`Material con ID ${materialId} no encontrado`);
     }
-
     await this.prisma.materiales.update({
       where: { id: materialId },
       data: { vistos: { increment: 1 } },
     });
   }
 
-  /**
-   * Asegura (idempotente) que la queue `material.analytics` exista en el namespace.
-   * Si no puede crear/consultar la queue, registra la advertencia y no lanza.
+    /**   * Incrementa el contador de vistas de un material específico.
    */
-  private async ensureAnalyticsQueue(): Promise<void> {
-    const queueName = 'material.analytics';
-    if (this.analyticsQueueEnsured) return;
-    if (!this.adminClient) {
-      this.logger.warn('AdminClient no disponible; omitido ensureAnalyticsQueue');
-      return;
+  async incrementDownloads(materialId: string): Promise<void> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    
+    if (!material) {
+      throw new BadRequestException(`Material con ID ${materialId} no encontrado`);
     }
-    try {
-      // Intentar obtener información de la queue
-      await this.adminClient.getQueue(queueName);
-      this.analyticsQueueEnsured = true;
-      return;
-    } catch (err) {
-      // Si no existe, crearla
-      try {
-        await this.adminClient.createQueue(queueName);
-        this.analyticsQueueEnsured = true;
-        this.logger.log(`Queue '${queueName}' creada en Service Bus`);
-        return;
-      } catch (error_) {
-        this.logger.warn(`No se pudo crear la queue '${queueName}': ${(error_ as Error).message}`);
-        return;
-      }
-    }
+    await this.prisma.materiales.update({
+      where: { id: materialId },
+      data: { descargas: { increment: 1 } },
+    });
   }
+
 }

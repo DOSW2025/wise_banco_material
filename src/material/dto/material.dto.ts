@@ -33,7 +33,8 @@ export class MaterialDto {
 
   @ApiProperty({ description: 'Fecha de última actualización del material' })
   updatedAt: Date;
-
+  @ApiProperty({ description: 'Nombre del usuario propietario del material' })
+  userName: string;
   @ApiProperty({
     description: 'Etiquetas asociadas al material',
     type: [String],
