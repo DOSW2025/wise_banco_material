@@ -2,7 +2,7 @@ import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Lo
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,} from '@nestjs/swagger';
+import {ApiOperation,ApiParam,ApiResponse,ApiTags,ApiConsumes,ApiBody,ApiQuery} from '@nestjs/swagger';
 import type { Response, Request } from 'express';
 import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
@@ -13,6 +13,8 @@ import { CreateRatingDto } from './dto/create-rating.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { SearchMaterialsDto } from './dto/search-materials.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
+import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
+import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -197,6 +199,15 @@ export class MaterialController {
     type: MaterialDto,
     isArray: true,
   })
+  @ApiResponse({
+  status: 400,
+  description:
+    'Parámetro `limit` inválido.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
   async getPopularMaterials(
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
   ): Promise<MaterialDto[]> {
@@ -229,6 +240,20 @@ export class MaterialController {
     description: 'Calificación registrada y promedio actualizado.',
     type: RateMaterialResponseDto,
   })
+  @ApiResponse({
+  status: 400,
+  description:
+    'Datos inválidos.',
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Material o usuario no encontrado.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
   async rateMaterial(
     @Param('id') materialId: string,
     @Body() body: CreateRatingDto,
@@ -241,6 +266,40 @@ export class MaterialController {
       rating,
       comentario,
     );
+  }
+
+  /**
+   * Endpoint para obtener todas las calificaciones de un material.
+   *
+   * Retorna:
+   * - Listado de todas las calificaciones del material
+   * - Promedio de calificaciones
+   * - Total de calificaciones
+   */
+  @Get(':id/ratings')
+  @ApiOperation({
+    summary: 'Obtener calificaciones de un material',
+    description:
+      'Retorna todas las calificaciones (ratings) registradas para un material específico, junto con el promedio y el total de calificaciones.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material',
+    example: 'mat-1',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de calificaciones y promedio del material.',
+    type: GetMaterialRatingsResponseDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El material no existe.',
+  })
+  async getMaterialRatings(
+    @Param('id') materialId: string,
+  ): Promise<GetMaterialRatingsResponseDto> {
+    return this.materialService.getMaterialRatings(materialId);
   }
 
   /**
@@ -355,4 +414,53 @@ export class MaterialController {
     // Pipear el stream al response
     stream.pipe(res);
   }
+
+  /**
+  * Autocompletado de materiales.
+  *
+  * Busca coincidencias en título, descripción y autor,
+  * retornando un máximo de 5 sugerencias ordenadas por relevancia.
+  */
+  @Get('autocomplete')
+  @ApiOperation({
+    summary: 'Autocompletado de búsqueda de materiales',
+    description:
+      'Busca en título, descripción y autor. Retorna hasta 5 sugerencias ordenadas por relevancia.',
+  })
+  @ApiQuery({
+    name: 'query',
+    required: true,
+    description: 'Cadena ingresada por el usuario',
+  })
+  @ApiQuery({
+    name: 'materia',
+    required: false,
+    description: 'Materia — no disponible actualmente',
+  })
+  @ApiQuery({
+    name: 'autor',
+    required: false,
+    description: 'Filtro opcional por autor',
+  })
+  @ApiResponse({
+    status: 200,
+    type: AutocompleteResponseDto,
+  })
+  @ApiResponse({
+  status: 400,
+  description:
+    'Parámetros inválidos. Ocurre, por ejemplo, si la palabra clave está vacía.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
+  async autocompleteMateriales(
+    @Query('query') query: string,
+    @Query('materia') materia?: string,
+    @Query('autor') autor?: string,
+  ): Promise<AutocompleteResponseDto> {
+    return this.materialService.autocompleteMaterials(query, materia, autor);
+  }
+
 }

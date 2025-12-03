@@ -14,7 +14,8 @@ import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
-import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
+import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
+import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 
 @Injectable()
 export class MaterialService {
@@ -24,7 +25,6 @@ export class MaterialService {
   private notification;        // Cola opcional para envío de mails
   private responseReceiver;    // Cola donde recibimos respuestas
   private readonly adminClient?: ServiceBusAdministrationClient;
-  private analyticsQueueEnsured = false;
   private readonly blobServiceClient: BlobServiceClient;
   private readonly containerClient: any;
   private readonly containerName = 'materials';
@@ -34,7 +34,7 @@ export class MaterialService {
 
   constructor(private readonly client: ServiceBusClient, private readonly prisma: PrismaService) {
     this.sender = this.client.createSender('material.process');
-    this.notification = this.client.createSender('mail.envio.rol');
+    this.notification = this.client.createSender('mail.envio.individual');
     this.responseReceiver = this.client.createReceiver('material.responses');
     // Admin client para operaciones de administración (crear/consultar queues)
     try {
@@ -51,79 +51,8 @@ export class MaterialService {
     });
 
     this.listenForResponses();
-    // Programar envío semanal de top materiales cada lunes
-    this.scheduleWeeklyTopMaterials();
   }
 
-  /**
-   * Programa la tarea semanal para enviar el top 5 de materiales cada lunes a las 08:00.
-   */
-  private scheduleWeeklyTopMaterials() {
-    const runWeekly = async () => {
-      try {
-        await this.sendWeeklyTopMaterialsEmail();
-      } catch (err) {
-        this.logger.error('Error enviando top materials semanal:', err as any);
-      }
-    };
-
-    const nextMondayAt8 = this.getNextWeekdayDate(1, 8, 0, 0); // 1 = Monday
-    const now = new Date();
-    const initialDelay = nextMondayAt8.getTime() - now.getTime();
-
-    // Si por alguna razón el delay es negativo, ejecutar inmediatamente
-    const safeInitialDelay = initialDelay > 0 ? initialDelay : 0;
-
-    // Programar la primera ejecución
-    setTimeout(() => {
-      // Ejecutar la tarea y luego programar intervalos semanales
-      runWeekly();
-      setInterval(runWeekly, 7 * 24 * 60 * 60 * 1000); // 7 días
-    }, safeInitialDelay);
-  }
-
-  /**
-   * Retorna la próxima fecha del día de la semana dado (0=Sunday,1=Monday...) a la hora especificada.
-   */
-  private getNextWeekdayDate(weekday: number, hour = 8, minute = 0, second = 0): Date {
-    const now = new Date();
-    const result = new Date(now);
-    result.setHours(hour, minute, second, 0);
-    const diff = (weekday + 7 - result.getDay()) % 7;
-    if (diff === 0 && result.getTime() <= now.getTime()) {
-      // Ya pasó la hora de hoy, programar para la próxima semana
-      result.setDate(result.getDate() + 7);
-    } else if (diff > 0) {
-      result.setDate(result.getDate() + diff);
-    }
-    return result;
-  }
-
-  /**
-   * Obtiene los top N materiales y envía una notificación por correo con el listado.
-   */
-  private async sendWeeklyTopMaterialsEmail() {
-    this.logger.log('Preparando envío semanal de top materiales...');
-    const topMaterials = await this.getPopularMaterials(5);
-
-    const resumen = `Top ${topMaterials.length} materiales de la semana`;
-
-    const cuerpo: any = {
-      rol: 'estudiante',
-      template: 'top5Semanal',
-      resumen,
-      guardar: false,
-      mandarCorreo: true,
-      topMaterials: topMaterials.map((m) => ({ id: m.userId,userName: m.userName, title: m.nombre, url: m.url, views: m.vistos, downloads: m.descargas })),
-    };
-
-    const message: ServiceBusMessage = {
-      body: cuerpo,
-    };
-
-    await this.notification.sendMessages(message);
-    this.logger.log('Envío semanal de top materiales encolado');
-  }
 
   /**
    * Listener permanente que consume mensajes desde material.responses
@@ -251,15 +180,8 @@ export class MaterialService {
 
   private waitForResponse(correlationId: string): Promise<RespuestaIADto> {
     return new Promise<RespuestaIADto>((resolve, reject) => {
-      // Timeout de 15 segundos
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(correlationId);
-        reject(new BadRequestException('Timeout: No se recibio respuesta de IA en 15 segundos'));
-      }, 15000);
-
       // Resolver con la respuesta de IA y limpiar timeout
       this.pendingRequests.set(correlationId, (response: RespuestaIADto) => {
-        clearTimeout(timeout);
         resolve(response);
       });
     });
@@ -301,7 +223,7 @@ export class MaterialService {
           subject
         );
         this.sendAnalysisMessage('', blobName, correlationId, 'save');
-        await this.enviarNotificacionNuevoMaterial(response);
+        await this.enviarNotificacion(response, materialData.userId, filename, "nuevoMaterialSubido");
         
         // Retornar respuesta exitosa 201 con formato especificado
         return {
@@ -393,15 +315,19 @@ export class MaterialService {
   }
 
   /**  * Envía una notificación a los estudiantes sobre un nuevo material subido */
-  async enviarNotificacionNuevoMaterial(response: RespuestaIADto) {
+  async enviarNotificacion(response: RespuestaIADto, userId: string, filename: string, template: string) {
+    const user = await this.prisma.usuarios.findUnique({where: {id: userId}});
+
     const cuerpo : NotificationDto= {
-      rol: 'estudiante',
-      template: 'nuevoMaterialSubido',
+      email: user?.email || 'estudiante',
+      nombre: user?.nombre || 'Estudiante',
+      template: template,
       resumen: `Se ha subido un nuevo materia de ${response.tema}`,
+      fileName: filename,
       tema: response.tema,
       materia: response.materia,
       guardar: true,
-      mandarCorreo: false,
+      mandarCorreo: true,
     }
 
     const Message : ServiceBusMessage= {
@@ -574,6 +500,47 @@ export class MaterialService {
     };
 
     return response;
+  }
+
+  /**
+   * Obtiene todas las calificaciones de un material y devuelve el promedio.
+   * 
+   * @param materialId - ID del material
+   * @returns Objeto con lista de calificaciones y el promedio
+   */
+  async getMaterialRatings(
+    materialId: string,
+  ): Promise<GetMaterialRatingsResponseDto> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    if (!material) {
+      this.logger.warn(`Intento de obtener calificaciones de material inexistente: ${materialId}`);
+      throw new NotFoundException('Material no encontrado');
+    }
+
+    const calificaciones = await this.prisma.calificaciones.findMany({
+      where: { idMaterial: materialId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const totalCalificaciones = calificaciones.length;
+    const calificacionPromedio =
+      totalCalificaciones > 0
+        ? calificaciones.reduce((acc: number, c: any) => acc + c.calificacion, 0) / totalCalificaciones
+        : 0;
+
+    return {
+      materialId,
+      calificacionPromedio,
+      totalCalificaciones,
+      calificaciones: calificaciones.map((c: any) => ({
+        id: c.id,
+        calificacion: c.calificacion,
+        comentario: c.comentario ?? null,
+        createdAt: c.createdAt,
+      })),
+    };
   }
       
    /*
@@ -773,5 +740,168 @@ export class MaterialService {
       where: { id: materialId },
       data: { descargas: { increment: 1 } },
     });
+  }
+
+  /**
+   *
+   * Entrada:
+   * - query (palabraClave): texto ingresado por el usuario
+   * - materia: filtro opcional 
+   * - autor: filtro opcional 
+   *
+   * Salida:
+   * - listaResultados: lista de máx. 5 materiales con título, autor, materia, calificación, descargas
+   * - contadorResultados: número total de coincidencias 
+   *
+   */
+  async autocompleteMaterials(
+    palabraClave: string,
+    materia?: string,
+    autor?: string,   
+  ): Promise<AutocompleteResponseDto> {
+    const term = palabraClave?.trim();
+
+    if (!term || term.length < 1) {
+      throw new BadRequestException(
+        'La palabra clave debe tener al menos 1 carácter',
+      );
+    }
+
+    const whereBase: any = {
+      OR: [
+        { nombre: { contains: term, mode: 'insensitive' } },
+        { descripcion: { contains: term, mode: 'insensitive' } },
+      ],
+    };
+
+    if (autor) {
+      whereBase.usuarios = {
+        OR: [
+          { nombre: { contains: autor, mode: 'insensitive' } },
+          { apellido: { contains: autor, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const contadorResultados = await this.prisma.materiales.count({
+      where: whereBase,
+    });
+
+    if (contadorResultados === 0) {
+      return {
+        listaResultados: [],
+        contadorResultados: 0,
+      };
+    }
+
+    const select = {
+      id: true,
+      nombre: true,
+      descripcion: true,
+      descargas: true,
+      usuarios: {
+        select: { nombre: true, apellido: true },
+      },
+    };
+
+    const sugerencias: any[] = [];
+    const seen = new Set<string>();
+
+    const addUnique = (arr: any[]) => {
+      for (const item of arr) {
+        if (sugerencias.length >= 5) break;
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        sugerencias.push(item);
+      }
+    };
+
+    const inicio = await this.prisma.materiales.findMany({
+      where: {
+        AND: [
+          whereBase,
+          {
+            nombre: { startsWith: term, mode: 'insensitive' },
+          },
+        ],
+      },
+      select,
+      take: 5,
+    });
+    addUnique(inicio);
+
+    if (sugerencias.length < 5) {
+      const contieneTitulo = await this.prisma.materiales.findMany({
+        where: {
+          AND: [
+            whereBase,
+            {
+              nombre: {
+                contains: term,
+                mode: 'insensitive',
+              },
+            },
+            {
+              NOT: {
+                nombre: {
+                  startsWith: term,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          ],
+        },
+        select,
+        take: 5,
+      });
+      addUnique(contieneTitulo);
+    }
+
+    if (sugerencias.length < 5) {
+      const descripcionMatches = await this.prisma.materiales.findMany({
+        where: {
+          AND: [
+            whereBase,
+            {
+              descripcion: {
+                contains: term,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        },
+        select,
+        take: 5,
+      });
+      addUnique(descripcionMatches);
+    }
+
+    const listaResultados: AutocompleteResponseDto['listaResultados'] = [];
+
+
+    for (const mat of sugerencias) {
+      const promedioAgg = await this.prisma.calificaciones.aggregate({
+        where: { idMaterial: mat.id },
+        _avg: { calificacion: true },
+      });
+
+      const autorNombre = mat.usuarios
+        ? `${mat.usuarios.nombre} ${mat.usuarios.apellido}`.trim()
+        : null;
+
+      listaResultados.push({
+        id: mat.id,
+        titulo: mat.nombre,
+        autor: autorNombre,
+        materia: null, 
+        calificacionPromedio: promedioAgg._avg.calificacion ?? null,
+        descargas: mat.descargas,
+      });
+    }
+
+    return {
+      listaResultados,
+      contadorResultados,
+    };
   }
 }

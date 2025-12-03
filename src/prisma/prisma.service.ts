@@ -1,6 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 // Importamos desde @prisma/client (ubicación por defecto en node_modules)
-// Antes usábamos '../../generated/prisma' pero causaba problemas con la compilación de NestJS
+// Antes usábamos '' pero causaba problemas con la compilación de NestJS
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';

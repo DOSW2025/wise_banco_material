@@ -5,12 +5,16 @@ import { Type } from 'class-transformer';
 export class NotificationDto {
 
     @IsString()
-    @IsOptional()
-    rol?: string;
+    email: string;
 
     @IsString()
     @ApiProperty({ example: 'nuevoMaterialSubido', required: true })
     template!: string;
+
+    @IsOptional()
+    @IsString()
+    nombre?: string;
+
 
     @IsString()
     @ApiProperty({ required: true, example: 'Resumen del correo' })
@@ -29,6 +33,10 @@ export class NotificationDto {
     @IsString()
     @IsOptional()
     materia?: string;
+
+    @IsString()
+    @IsOptional()
+    fileName?: string;
 
     @IsString()
     @IsOptional()
