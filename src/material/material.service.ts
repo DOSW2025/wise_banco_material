@@ -16,6 +16,7 @@ import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
+import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 
 @Injectable()
 export class MaterialService {
@@ -575,6 +576,47 @@ export class MaterialService {
     };
 
     return response;
+  }
+
+  /**
+   * Obtiene todas las calificaciones de un material y devuelve el promedio.
+   * 
+   * @param materialId - ID del material
+   * @returns Objeto con lista de calificaciones y el promedio
+   */
+  async getMaterialRatings(
+    materialId: string,
+  ): Promise<GetMaterialRatingsResponseDto> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    if (!material) {
+      this.logger.warn(`Intento de obtener calificaciones de material inexistente: ${materialId}`);
+      throw new NotFoundException('Material no encontrado');
+    }
+
+    const calificaciones = await this.prisma.calificaciones.findMany({
+      where: { idMaterial: materialId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const totalCalificaciones = calificaciones.length;
+    const calificacionPromedio =
+      totalCalificaciones > 0
+        ? calificaciones.reduce((acc: number, c: any) => acc + c.calificacion, 0) / totalCalificaciones
+        : 0;
+
+    return {
+      materialId,
+      calificacionPromedio,
+      totalCalificaciones,
+      calificaciones: calificaciones.map((c: any) => ({
+        id: c.id,
+        calificacion: c.calificacion,
+        comentario: c.comentario ?? null,
+        createdAt: c.createdAt,
+      })),
+    };
   }
       
    /*
