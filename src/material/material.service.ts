@@ -938,4 +938,138 @@ export class MaterialService {
       contadorResultados,
     };
   }
+
+  /**
+ * Actualiza la versión de un material existente:
+ * - Reemplaza el archivo PDF en Blob Storage
+ * - Actualiza metadata (título, descripción, url, extensión, hash, updatedAt)
+ * - Regenera tags (tags IA + subject)
+ */
+async updateMaterialVersion(
+  materialId: string,
+  pdfBuffer: Buffer,
+  materialData: CreateMaterialDto,
+  originalName?: string,
+): Promise<CreateMaterialResponseDto> {
+  const existing = await this.prisma.materiales.findUnique({
+    where: { id: materialId },
+  });
+
+  if (!existing) {
+    this.logger.warn(`Intento de actualizar material inexistente: ${materialId}`);
+    throw new NotFoundException('Material no encontrado');
+  }
+
+  const userExists = await this.prisma.usuarios.findUnique({
+    where: { id: materialData.userId },
+  });
+  if (!userExists) {
+    throw new BadRequestException(
+      `El userId ${materialData.userId} no existe en la base de datos`,
+    );
+  }
+
+  const correlationId = uuid();
+  const filename = materialData.title;
+
+  const extension = originalName
+    ? path.extname(originalName).replace(/^\./, '').toLowerCase()
+    : 'pdf';
+
+  const hash = createHash('sha256').update(pdfBuffer).digest('hex');
+  this.logger.log(`Hash calculado para actualización de material ${materialId}: ${hash}`);
+
+  const duplicate = await this.prisma.materiales.findFirst({
+    where: { hash, NOT: { id: materialId } },
+  });
+
+  if (duplicate) {
+    this.logger.warn(
+      `Material duplicado detectado al actualizar versión (materialId=${materialId})`,
+    );
+    throw new ConflictException('Material already exists with same content');
+  }
+
+  const blobName = `${correlationId}-${filename}`;
+  let fileUrl: string;
+  try {
+    fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
+  } catch (err) {
+    this.logger.error('Error subiendo PDF a Blob (actualización):', err as any);
+    throw new BadRequestException('Error almacenando PDF');
+  }
+
+  try {
+    await this.sendAnalysisMessage(fileUrl, blobName, correlationId, 'analysis');
+  } catch (err) {
+    this.logger.error('Error enviando mensaje a IA (actualización):', err as any);
+    await this.deleteBlobSafe(blobName, correlationId);
+    throw new BadRequestException('Error enviando a IA');
+  }
+
+  const response: RespuestaIADto = await this.waitForResponse(correlationId);
+
+  if (!response.valid) {
+    const reason = response.reason;
+    this.logger.log(
+      `Material actualizado marcado como NO VÁLIDO por IA (correlationId=${correlationId})` +
+        (reason ? ` - motivo: ${reason}` : ''),
+    );
+    await this.deleteBlobSafe(blobName, correlationId);
+    const message = reason
+      ? `PDF falló la validación automatizada: ${reason}`
+      : 'PDF falló la validación automatizada';
+    throw new UnprocessableEntityException(message);
+  }
+
+  this.logger.log(
+    `Material validado como VÁLIDO por IA en actualización (correlationId=${correlationId})`,
+  );
+
+  const newFileUrl = `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`;
+
+  await this.prisma.materialTags.deleteMany({
+    where: { idMaterial: materialId },
+  });
+
+  await this.guardarTags(response.tags, materialId, materialData.subject);
+
+  const updated = await this.prisma.materiales.update({
+    where: { id: materialId },
+    data: {
+      nombre: filename,
+      descripcion: materialData.description,
+      url: newFileUrl,
+      extension,          
+      hash,
+      updatedAt: new Date(),
+    },
+  });
+
+  await this.sendAnalysisMessage('', blobName, correlationId, 'save');
+
+  try {
+    if (existing.url) {
+      const oldUrl = new URL(existing.url);
+      const parts = oldUrl.pathname.split('/');
+      const oldBlobName = decodeURIComponent(parts.slice(2).join('/'));
+      await this.deleteBlobSafe(oldBlobName, materialId);
+    }
+  } catch (err) {
+    this.logger.warn(
+      `No se pudo eliminar el blob anterior para material ${materialId}: ${(err as Error).message}`,
+    );
+  }
+
+  return {
+    id: updated.id,
+    title: materialData.title,
+    description: materialData.description,
+    subject: materialData.subject,
+    filename,
+    fileUrl: newFileUrl,
+    createdAt: existing.createdAt, 
+  };
+}
+
 }
