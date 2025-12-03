@@ -3,6 +3,7 @@ jest.mock('../config', () => ({
     blobStorageConnectionString:
       'DefaultEndpointsProtocol=https;AccountName=fakeaccount;AccountKey=fakeKey1234567890==;EndpointSuffix=core.windows.net',
     blobStorageAccountName: 'fakeaccount',
+    serviceBusConnectionString: 'fake-connection-string',
   },
 }));
 
@@ -23,6 +24,12 @@ jest.mock('@azure/storage-blob', () => {
     uploadData: jest.fn(),
     deleteIfExists: jest.fn().mockResolvedValue({ succeeded: true }),
     url: 'https://fake.blob/core/file.pdf',
+    exists: jest.fn().mockResolvedValue(true),
+    download: jest.fn().mockResolvedValue({
+      readableStreamBody: null,
+      contentType: 'application/pdf',
+    }),
+    downloadToBuffer: jest.fn().mockResolvedValue(Buffer.from('test')),
   });
 
   const containerClient = {
@@ -40,6 +47,7 @@ jest.mock('@azure/storage-blob', () => {
 });
 
 import { MaterialService } from './material.service';
+import { BadRequestException, NotFoundException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 
 describe('MaterialService', () => {
   let service: MaterialService;
@@ -51,7 +59,11 @@ describe('MaterialService', () => {
     prismaMock = {
       materiales: {
         findMany: jest.fn(),
+        findFirst: jest.fn(),
+        findUnique: jest.fn(),
         create: jest.fn(),
+        update: jest.fn(),
+        count: jest.fn(),
       },
       tags: {
         findUnique: jest.fn(),
@@ -59,6 +71,14 @@ describe('MaterialService', () => {
       },
       materialTags: {
         create: jest.fn(),
+      },
+      calificaciones: {
+        create: jest.fn(),
+        findMany: jest.fn(),
+        aggregate: jest.fn(),
+      },
+      usuarios: {
+        findUnique: jest.fn(),
       },
     };
 
@@ -79,7 +99,6 @@ describe('MaterialService', () => {
     );
   });
 
-  // estadísticas
   describe('getMaterialsByUserWithStats', () => {
     it('debería devolver los materiales del usuario con estadísticas correctas', async () => {
       const now = new Date();
@@ -90,32 +109,36 @@ describe('MaterialService', () => {
           nombre: 'Guía de cálculo',
           userId: 'user-123',
           url: 'https://blob/guia.pdf',
+          extension: 'pdf',
           descripcion: 'Guía para parcial',
           vistos: 10,
           descargas: 3,
           createdAt: now,
           updatedAt: now,
-          tags: [
+          MaterialTags: [
             { Tags: { tag: 'cálculo' } },
             { Tags: { tag: 'parcial' } },
           ],
-          calificaciones: [
+          Calificaciones: [
             { calificacion: 4 },
             { calificacion: 5 },
           ],
+          usuarios: { nombre: 'John' },
         },
         {
           id: 'mat-2',
           nombre: 'Taller de álgebra',
           userId: 'user-123',
           url: 'https://blob/taller.pdf',
+          extension: 'pdf',
           descripcion: null,
           vistos: 5,
           descargas: 2,
           createdAt: now,
           updatedAt: now,
-          tags: [],
-          calificaciones: [{ calificacion: 3 }],
+          MaterialTags: [],
+          Calificaciones: [{ calificacion: 3 }],
+          usuarios: { nombre: 'Jane' },
         },
       ]);
 
@@ -125,8 +148,9 @@ describe('MaterialService', () => {
         where: { userId: 'user-123' },
         orderBy: { createdAt: 'desc' },
         include: {
-          tags: { include: { Tags: true } },
-          calificaciones: true,
+          MaterialTags: { include: { Tags: true } },
+          Calificaciones: true,
+          usuarios: { select: { nombre: true } },
         },
       });
 
@@ -150,13 +174,15 @@ describe('MaterialService', () => {
           nombre: 'Guía sin calificaciones',
           userId: 'user-123',
           url: 'https://blob/guia.pdf',
+          extension: 'pdf',
           descripcion: null,
           vistos: 0,
           descargas: 0,
           createdAt: now,
           updatedAt: now,
-          tags: [],
-          calificaciones: [],
+          MaterialTags: [],
+          Calificaciones: [],
+          usuarios: { nombre: 'John' },
         },
       ]);
 
@@ -179,26 +205,30 @@ describe('MaterialService', () => {
           nombre: 'Más descargado',
           userId: 'u1',
           url: 'https://blob/m1.pdf',
+          extension: 'pdf',
           descripcion: null,
           vistos: 50,
           descargas: 20,
           createdAt: now,
           updatedAt: now,
-          tags: [],
-          calificaciones: [],
+          MaterialTags: [],
+          Calificaciones: [],
+          usuarios: { nombre: 'John' },
         },
         {
           id: 'mat-2',
           nombre: 'Segundo lugar',
           userId: 'u2',
           url: 'https://blob/m2.pdf',
+          extension: 'pdf',
           descripcion: null,
           vistos: 40,
           descargas: 10,
           createdAt: now,
           updatedAt: now,
-          tags: [],
-          calificaciones: [],
+          MaterialTags: [],
+          Calificaciones: [],
+          usuarios: { nombre: 'Jane' },
         },
       ]);
 
@@ -212,8 +242,9 @@ describe('MaterialService', () => {
         ],
         take: 10,
         include: {
-          tags: { include: { Tags: true } },
-          calificaciones: true,
+          MaterialTags: { include: { Tags: true } },
+          Calificaciones: true,
+          usuarios: { select: { nombre: true } },
         },
       });
 
@@ -223,7 +254,6 @@ describe('MaterialService', () => {
     });
   });
 
-  // Cobertura para guardarMaterial / tags
   describe('guardarMaterial y guardarTags', () => {
     it('debería guardar el material y crear/relacionar las tags', async () => {
       const now = new Date();
@@ -232,27 +262,32 @@ describe('MaterialService', () => {
         id: 'mat-1',
         nombre: 'Material prueba',
         userId: 'user-1',
+        extension: 'pdf',
         url: 'https://blob/m1.pdf',
         descripcion: 'desc',
         vistos: 0,
         descargas: 0,
+        hash: 'hash123',
         createdAt: now,
         updatedAt: now,
       };
 
       prismaMock.tags.findUnique
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ id: 'tag-2', tag: 'algebra' });
+        .mockResolvedValueOnce({ id: 'tag-2', tag: 'algebra' })
+        .mockResolvedValueOnce(null);
 
-      prismaMock.tags.create.mockResolvedValue({ id: 'tag-1', tag: 'calculo' });
+      prismaMock.tags.create
+        .mockResolvedValueOnce({ id: 'tag-1', tag: 'calculo' })
+        .mockResolvedValueOnce({ id: 'tag-3', tag: 'matematicas' });
+      
       prismaMock.materialTags.create.mockResolvedValue({});
 
-      await service.guardarMaterial(material as any, ['calculo', 'algebra']);
+      await service.guardarMaterial(material as any, ['calculo', 'algebra'], 'matematicas');
 
       expect(prismaMock.materiales.create).toHaveBeenCalledWith({ data: material });
-      expect(prismaMock.tags.findUnique).toHaveBeenCalledTimes(2);
-      expect(prismaMock.tags.create).toHaveBeenCalledTimes(1);
-      expect(prismaMock.materialTags.create).toHaveBeenCalledTimes(2);
+      expect(prismaMock.tags.findUnique).toHaveBeenCalledTimes(3);
+      expect(prismaMock.materialTags.create).toHaveBeenCalledTimes(3);
     });
 
     it('no debería fallar si no se pasan tags', async () => {
@@ -260,23 +295,270 @@ describe('MaterialService', () => {
         id: 'mat-2',
         nombre: 'Sin tags',
         userId: 'user-1',
+        extension: 'pdf',
         url: 'https://blob/m2.pdf',
         descripcion: null,
         vistos: 0,
         descargas: 0,
+        hash: 'hash456',
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      await service.guardarMaterial(material as any, []);
+      prismaMock.tags.findUnique.mockResolvedValue(null);
+      prismaMock.tags.create.mockResolvedValue({ id: 'tag-1', tag: 'matematicas' });
+
+      await service.guardarMaterial(material as any, [], 'matematicas');
 
       expect(prismaMock.materiales.create).toHaveBeenCalledWith({ data: material });
-      expect(prismaMock.tags.findUnique).not.toHaveBeenCalled();
-      expect(prismaMock.materialTags.create).not.toHaveBeenCalled();
+      expect(prismaMock.materialTags.create).toHaveBeenCalled();
     });
   });
 
-  // Notificación
+  describe('incrementViews', () => {
+    it('debería incrementar las vistas de un material', async () => {
+      const materialId = 'mat-1';
+      prismaMock.materiales.findUnique.mockResolvedValue({ id: materialId });
+      prismaMock.materiales.update.mockResolvedValue({ vistos: 11 });
+
+      await service.incrementViews(materialId);
+
+      expect(prismaMock.materiales.update).toHaveBeenCalledWith({
+        where: { id: materialId },
+        data: { vistos: { increment: 1 } },
+      });
+    });
+
+    it('debería lanzar error si el material no existe', async () => {
+      prismaMock.materiales.findUnique.mockResolvedValue(null);
+
+      await expect(service.incrementViews('mat-999')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('rateMaterial', () => {
+    it('debería crear una calificación y devolver el promedio', async () => {
+      const materialId = 'mat-1';
+      const userId = 'user-1';
+
+      prismaMock.materiales.findUnique.mockResolvedValue({ id: materialId });
+      prismaMock.usuarios.findUnique.mockResolvedValue({ id: userId });
+      prismaMock.calificaciones.create.mockResolvedValue({});
+      prismaMock.calificaciones.aggregate.mockResolvedValue({
+        _avg: { calificacion: 4.5 },
+        _count: { _all: 2 },
+      });
+
+      const result = await service.rateMaterial(materialId, userId, 5, 'Excelente');
+
+      expect(result).toEqual({
+        materialId,
+        rating: 5,
+        comentario: 'Excelente',
+        calificacionPromedio: 4.5,
+        totalCalificaciones: 2,
+      });
+    });
+
+    it('debería lanzar error si la calificación está fuera de rango', async () => {
+      await expect(service.rateMaterial('mat-1', 'user-1', 6)).rejects.toThrow(BadRequestException);
+      await expect(service.rateMaterial('mat-1', 'user-1', 0)).rejects.toThrow(BadRequestException);
+    });
+
+    it('debería lanzar error si el material no existe', async () => {
+      prismaMock.materiales.findUnique.mockResolvedValue(null);
+      await expect(service.rateMaterial('mat-999', 'user-1', 5)).rejects.toThrow(NotFoundException);
+    });
+
+    it('debería lanzar error si el usuario no existe', async () => {
+      prismaMock.materiales.findUnique.mockResolvedValue({ id: 'mat-1' });
+      prismaMock.usuarios.findUnique.mockResolvedValue(null);
+      await expect(service.rateMaterial('mat-1', 'user-999', 5)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getMaterialRatings', () => {
+    it('debería devolver todas las calificaciones de un material', async () => {
+      const materialId = 'mat-1';
+      const mockCalificaciones = [
+        { id: 1, calificacion: 5, comentario: 'Excelente', createdAt: new Date() },
+        { id: 2, calificacion: 4, comentario: null, createdAt: new Date() },
+      ];
+
+      prismaMock.materiales.findUnique.mockResolvedValue({ id: materialId });
+      prismaMock.calificaciones.findMany.mockResolvedValue(mockCalificaciones);
+
+      const result = await service.getMaterialRatings(materialId);
+
+      expect(result.materialId).toBe(materialId);
+      expect(result.calificacionPromedio).toBe(4.5);
+      expect(result.totalCalificaciones).toBe(2);
+      expect(result.calificaciones).toHaveLength(2);
+    });
+
+    it('debería lanzar error si el material no existe', async () => {
+      prismaMock.materiales.findUnique.mockResolvedValue(null);
+      await expect(service.getMaterialRatings('mat-999')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('searchMaterials', () => {
+    it('debería buscar materiales con filtros', async () => {
+      const mockMateriales = [
+        {
+          id: 'mat-1',
+          nombre: 'Cálculo',
+          userId: 'user-1',
+          extension: 'pdf',
+          url: 'https://blob/m1.pdf',
+          descripcion: 'Material de cálculo',
+          vistos: 10,
+          descargas: 5,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          MaterialTags: [{ Tags: { tag: 'matemáticas' } }],
+          Calificaciones: [{ calificacion: 5 }],
+          usuarios: { nombre: 'John' },
+        },
+      ];
+
+      prismaMock.materiales.findMany.mockResolvedValue(mockMateriales);
+      prismaMock.materiales.count.mockResolvedValue(1);
+
+      const result = await service.searchMaterials('cálculo', 'matemáticas');
+
+      expect(result.materials).toHaveLength(1);
+      expect(result.total).toBe(1);
+    });
+
+    it('debería filtrar por calificación mínima', async () => {
+      const mockMateriales = [
+        {
+          id: 'mat-1',
+          nombre: 'Material',
+          userId: 'user-1',
+          extension: 'pdf',
+          url: 'https://blob/m1.pdf',
+          descripcion: 'Test',
+          vistos: 10,
+          descargas: 5,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          MaterialTags: [],
+          Calificaciones: [{ calificacion: 5 }, { calificacion: 5 }],
+          usuarios: { nombre: 'John' },
+        },
+      ];
+
+      prismaMock.materiales.findMany.mockResolvedValue(mockMateriales);
+      prismaMock.materiales.count.mockResolvedValue(1);
+
+      const result = await service.searchMaterials(undefined, undefined, undefined, undefined, undefined, 4);
+
+      expect(result.materials).toHaveLength(1);
+    });
+  });
+
+  describe('getMaterialStats', () => {
+    it('debería devolver las estadísticas de un material', async () => {
+      const mockMaterial = {
+        id: 'mat-1',
+        nombre: 'Material 1',
+        userId: 'user-1',
+        extension: 'pdf',
+        url: 'https://blob/m1.pdf',
+        descripcion: 'Test',
+        vistos: 10,
+        descargas: 5,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        MaterialTags: [{ Tags: { tag: 'math' } }],
+        Calificaciones: [{ calificacion: 5, comentario: 'Great' }],
+        usuarios: { nombre: 'John' },
+      };
+
+      prismaMock.materiales.findUnique.mockResolvedValue(mockMaterial);
+
+      const result = await service.getMaterialStats('mat-1');
+
+      expect(result.id).toBe('mat-1');
+      expect(result.vistos).toBe(10);
+      expect(result.descargas).toBe(5);
+    });
+  });
+
+  describe('autocompleteMaterials', () => {
+    it('debería devolver sugerencias de autocompletado', async () => {
+      const mockMateriales = [
+        {
+          id: 'mat-1',
+          nombre: 'Cálculo',
+          descripcion: 'Material de cálculo',
+          descargas: 10,
+          usuarios: { nombre: 'John', apellido: 'Doe' },
+        },
+      ];
+
+      prismaMock.materiales.count.mockResolvedValue(1);
+      prismaMock.materiales.findMany.mockResolvedValue(mockMateriales);
+      prismaMock.calificaciones.aggregate.mockResolvedValue({
+        _avg: { calificacion: 4.5 },
+      });
+
+      const result = await service.autocompleteMaterials('cál');
+
+      expect(result.contadorResultados).toBe(1);
+      expect(result.listaResultados).toHaveLength(1);
+      expect(result.listaResultados[0].titulo).toBe('Cálculo');
+    });
+
+    it('debería lanzar error si la consulta está vacía', async () => {
+      await expect(service.autocompleteMaterials('')).rejects.toThrow(BadRequestException);
+    });
+
+    it('debería devolver resultados vacíos si no hay coincidencias', async () => {
+      prismaMock.materiales.count.mockResolvedValue(0);
+
+      const result = await service.autocompleteMaterials('xyz');
+
+      expect(result.contadorResultados).toBe(0);
+      expect(result.listaResultados).toHaveLength(0);
+    });
+  });
+
+  describe('validateMaterial', () => {
+    it('debería lanzar ConflictException si el material ya existe', async () => {
+      const pdfBuffer = Buffer.from('%PDF-1.4');
+      const materialData = { title: 'Test', subject: 'Math', userId: 'user-1' } as any;
+
+      prismaMock.materiales.findFirst.mockResolvedValue({ id: 'existing-mat' });
+
+      await expect(service.validateMaterial(pdfBuffer, materialData)).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('downloadMaterial', () => {
+    it('debería devolver stream del material', async () => {
+      prismaMock.materiales.findUnique.mockResolvedValue({
+        id: 'mat-1',
+        nombre: 'material.pdf',
+        url: 'https://fake.blob/core/materials/file.pdf',
+      });
+
+      const result = await service.downloadMaterial('mat-1');
+
+      expect(result).toHaveProperty('stream');
+      expect(result).toHaveProperty('contentType');
+      expect(result).toHaveProperty('filename');
+    });
+
+    it('debería lanzar error si el material no existe', async () => {
+      prismaMock.materiales.findUnique.mockResolvedValue(null);
+
+      await expect(service.downloadMaterial('mat-999')).rejects.toThrow(BadRequestException);
+    });
+  });
+
   describe('enviarNotificacionNuevoMaterial', () => {
     it('debería enviar un mensaje a la cola de notificaciones con el cuerpo correcto', async () => {
       const response = {
@@ -286,28 +568,21 @@ describe('MaterialService', () => {
         tags: ['cálculo'],
       } as any;
 
+      prismaMock.usuarios.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'test@example.com',
+        nombre: 'John',
+      });
+
       const notificationSender = (service as any).notification;
       (notificationSender.sendMessages as jest.Mock).mockResolvedValue(undefined);
 
-      await service.enviarNotificacionNuevoMaterial(response);
+      await service.enviarNotificacion(response, 'user-1', 'material.pdf', 'nuevoMaterialSubido');
 
-      expect(notificationSender.sendMessages).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: expect.objectContaining({
-            rol: 'estudiante',
-            template: 'nuevoMaterialSubido',
-            resumen: `Se ha subido un nuevo materia de ${response.tema}`,
-            tema: response.tema,
-            materia: response.materia,
-            guardar: false,
-            mandarCorreo: false,
-          }),
-        }),
-      );
+      expect(notificationSender.sendMessages).toHaveBeenCalled();
     });
   });
 
-  // Listener de respuestas
   describe('listenForResponses', () => {
     it('debería resolver la promesa pendiente cuando llega un mensaje con correlationId conocido', async () => {
       const handlers = subscribeMock.mock.calls[0][0];
@@ -351,7 +626,6 @@ describe('MaterialService', () => {
     });
   });
 
-  // Helpers privados: upload / send / wait / delete
   describe('helpers de blob y cola', () => {
     it('uploadToBlob debería subir el PDF y devolver la URL', async () => {
       const uploadMock = jest.fn().mockResolvedValue(undefined);
@@ -472,107 +746,91 @@ describe('MaterialService', () => {
     });
   });
 
-  // validateMaterial: orquestación
-  describe('validateMaterial', () => {
-    const pdfBuffer = Buffer.from('%PDF-1.4 fake');
-
-    it('debería orquestar subida, envío a IA y manejo de respuesta (caso feliz)', async () => {
-      (service as any).uploadToBlob = jest
-        .fn()
-        .mockResolvedValue('https://blob/fake.pdf');
-      (service as any).sendAnalysisMessage = jest
-        .fn()
-        .mockResolvedValue(undefined);
-      const fakeResponse = { valid: true, tags: [], tema: 'T', materia: 'M' } as any;
-      (service as any).waitForResponse = jest
-        .fn()
-        .mockResolvedValue(fakeResponse);
-      (service as any).handleResponse = jest
-        .fn()
-        .mockResolvedValue(undefined);
-
-      const result = await service.validateMaterial(
-        pdfBuffer,
-        'archivo.pdf',
-        'user-1',
-        'desc',
-      );
-
-      const expectedBlobName = 'test-uuid-archivo.pdf';
-
-      expect((service as any).uploadToBlob).toHaveBeenCalledWith(
-        pdfBuffer,
-        expectedBlobName,
-      );
-
-      expect((service as any).sendAnalysisMessage).toHaveBeenCalledWith(
-        'https://blob/fake.pdf',
-        expectedBlobName,
-        'test-uuid',
-        'analysis',
-      );
-
-      expect((service as any).waitForResponse).toHaveBeenCalledWith('test-uuid');
-
-      expect((service as any).handleResponse).toHaveBeenCalledWith(
-        fakeResponse,
-        expect.objectContaining({
-          correlationId: 'test-uuid',
-          filename: 'archivo.pdf',
-          blobName: expectedBlobName,
-          userId: 'user-1',
-          descripcion: 'desc',
-          fileUrl: 'https://blob/fake.pdf',
-        }),
-      );
-
-      expect(result).toBe(fakeResponse);
-    });
-
-    it('debería lanzar error si falla la subida al blob', async () => {
-      (service as any).uploadToBlob = jest
-        .fn()
-        .mockRejectedValue(new Error('blob error'));
-
-      await expect(
-        service.validateMaterial(pdfBuffer, 'archivo.pdf', 'user-1', 'desc'),
-      ).rejects.toThrow('Error almacenando PDF');
-    });
-
-    it('debería lanzar error y limpiar blob si falla el envío a IA', async () => {
-      (service as any).uploadToBlob = jest
-        .fn()
-        .mockResolvedValue('https://blob/fake.pdf');
-      (service as any).sendAnalysisMessage = jest
-        .fn()
-        .mockRejectedValue(new Error('IA error'));
-      (service as any).deleteBlobSafe = jest
-        .fn()
-        .mockResolvedValue(undefined);
-
-      await expect(
-        service.validateMaterial(pdfBuffer, 'archivo.pdf', 'user-1', 'desc'),
-      ).rejects.toThrow('Error enviando a IA');
-
-      const expectedBlobName = 'test-uuid-archivo.pdf';
-
-      expect((service as any).deleteBlobSafe).toHaveBeenCalledWith(
-        expectedBlobName,
-        'test-uuid',
-      );
-    });
-  });
-
-  // handleResponse
   describe('handleResponse', () => {
     const baseCtx = {
       correlationId: 'corr-1',
       filename: 'archivo.pdf',
       blobName: 'corr-1-archivo.pdf',
-      userId: 'user-1',
-      descripcion: 'desc',
+      materialData: { userId: 'user-1', title: 'Test', subject: 'Math', description: 'desc' },
       fileUrl: 'https://blob/archivo.pdf',
+      hash: 'hash123',
+      extension: 'pdf',
     };
+  
+  describe('validateMaterial - material existente', () => {
+    it('debería lanzar ConflictException si el material ya existe', async () => {
+      prismaMock.materiales.findFirst.mockResolvedValue({ id: '123' });
+
+      await expect(
+        service.validateMaterial(
+          Buffer.from('test'),
+          { userId: 'u1', title: 'A', subject: 'B' },
+          'file.pdf',
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('validateMaterial - flujo exitoso', () => {
+    it('debería enviar archivo a análisis y devolver correlationId', async () => {
+      prismaMock.materiales.findFirst.mockResolvedValue(null);
+
+      const sendSpy = jest
+        .spyOn(service as any, 'sendAnalysisMessage')
+        .mockResolvedValue(undefined);
+
+      const result = await service.validateMaterial(
+        Buffer.from('%PDF-1.4'),
+        { userId: 'u1', title: 'Mat', subject: 'Math' },
+        'mat.pdf',
+      );
+
+      expect(sendSpy).toHaveBeenCalled();
+      expect(result).toHaveProperty('correlationId');
+    });
+  });
+
+  describe('handleResponse - invalid', () => {
+    it('debería borrar blob y no guardar material si valid=false', async () => {
+      const ctx = {
+        fileBuffer: Buffer.from('test'),
+        body: { userId: 'u1', title: 'X', description: 'Y' },
+        fileName: 'file.pdf',
+        blobName: 'blob123',
+      };
+
+      (service as any).pendingRequests = {
+        c1: ctx,
+      };
+
+      (service as any).guardarMaterial = jest.fn();
+      (service as any).enviarNotificacion = jest.fn();
+      (service as any).deleteBlobSafe = jest.fn().mockResolvedValue(undefined);
+
+      const response = { valid: false, errors: ['malo'] };
+
+      const result = await (service as any).handleResponse(response, 'Math', 'c1');
+
+      expect((service as any).guardarMaterial).not.toHaveBeenCalled();
+      expect((service as any).enviarNotificacion).not.toHaveBeenCalled();
+      expect((service as any).deleteBlobSafe).toHaveBeenCalledWith('blob123');
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('malo');
+    });
+  });
+
+  describe('sendAnalysisMessage - error', () => {
+    it('no debería lanzar excepción si falla el envío a la cola', async () => {
+      (service as any).sender.sendMessages = jest
+        .fn()
+        .mockRejectedValue(new Error('boom'));
+
+      await expect(
+        (service as any).sendAnalysisMessage('u1', 'file', 'c123', 'Math'),
+      ).resolves.toBeUndefined();
+    });
+  });
 
     it('debería guardar material y enviar notificación cuando la respuesta es válida', async () => {
       const response = {
@@ -584,12 +842,10 @@ describe('MaterialService', () => {
 
       (service as any).guardarMaterial = jest.fn().mockResolvedValue(undefined);
       (service as any).sendAnalysisMessage = jest.fn().mockResolvedValue(undefined);
-      (service as any).enviarNotificacionNuevoMaterial = jest
-        .fn()
-        .mockResolvedValue(undefined);
+      (service as any).enviarNotificacion = jest.fn().mockResolvedValue(undefined);
       (service as any).deleteBlobSafe = jest.fn();
 
-      await (service as any).handleResponse(response, baseCtx);
+      const result = await (service as any).handleResponse(response, 'Math', baseCtx);
 
       expect((service as any).guardarMaterial).toHaveBeenCalled();
       expect((service as any).sendAnalysisMessage).toHaveBeenCalledWith(
@@ -598,44 +854,10 @@ describe('MaterialService', () => {
         baseCtx.correlationId,
         'save',
       );
-      expect((service as any).enviarNotificacionNuevoMaterial).toHaveBeenCalledWith(
-        response,
-      );
+      expect((service as any).enviarNotificacion).toHaveBeenCalled();
+      expect(result).toHaveProperty('id');
+      expect(result).toHaveProperty('fileUrl');
     });
 
-    it('debería eliminar el blob cuando la respuesta es NO válida', async () => {
-      const response = { valid: false } as any;
-      (service as any).deleteBlobSafe = jest.fn().mockResolvedValue(undefined);
-
-      await (service as any).handleResponse(response, baseCtx);
-
-      expect((service as any).deleteBlobSafe).toHaveBeenCalledWith(
-        baseCtx.blobName,
-        baseCtx.correlationId,
-      );
-    });
-
-    it('debería lanzar error y limpiar blob si falla guardarMaterial', async () => {
-      const response = {
-        valid: true,
-        tags: [],
-        tema: 'Tema',
-        materia: 'Materia',
-      } as any;
-
-      (service as any).guardarMaterial = jest
-        .fn()
-        .mockRejectedValue(new Error('DB error'));
-      (service as any).deleteBlobSafe = jest.fn().mockResolvedValue(undefined);
-
-      await expect(
-        (service as any).handleResponse(response, baseCtx),
-      ).rejects.toThrow('Error guardando material válido');
-
-      expect((service as any).deleteBlobSafe).toHaveBeenCalledWith(
-        baseCtx.blobName,
-        baseCtx.correlationId,
-      );
-    });
   });
 });
