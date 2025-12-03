@@ -15,6 +15,7 @@ import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
+import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 
 @Injectable()
@@ -815,5 +816,168 @@ export class MaterialService {
       where: { id: materialId },
       data: { descargas: { increment: 1 } },
     });
+  }
+
+  /**
+   *
+   * Entrada:
+   * - query (palabraClave): texto ingresado por el usuario
+   * - materia: filtro opcional 
+   * - autor: filtro opcional 
+   *
+   * Salida:
+   * - listaResultados: lista de máx. 5 materiales con título, autor, materia, calificación, descargas
+   * - contadorResultados: número total de coincidencias 
+   *
+   */
+  async autocompleteMaterials(
+    palabraClave: string,
+    materia?: string,
+    autor?: string,   
+  ): Promise<AutocompleteResponseDto> {
+    const term = palabraClave?.trim();
+
+    if (!term || term.length < 1) {
+      throw new BadRequestException(
+        'La palabra clave debe tener al menos 1 carácter',
+      );
+    }
+
+    const whereBase: any = {
+      OR: [
+        { nombre: { contains: term, mode: 'insensitive' } },
+        { descripcion: { contains: term, mode: 'insensitive' } },
+      ],
+    };
+
+    if (autor) {
+      whereBase.usuarios = {
+        OR: [
+          { nombre: { contains: autor, mode: 'insensitive' } },
+          { apellido: { contains: autor, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const contadorResultados = await this.prisma.materiales.count({
+      where: whereBase,
+    });
+
+    if (contadorResultados === 0) {
+      return {
+        listaResultados: [],
+        contadorResultados: 0,
+      };
+    }
+
+    const select = {
+      id: true,
+      nombre: true,
+      descripcion: true,
+      descargas: true,
+      usuarios: {
+        select: { nombre: true, apellido: true },
+      },
+    };
+
+    const sugerencias: any[] = [];
+    const seen = new Set<string>();
+
+    const addUnique = (arr: any[]) => {
+      for (const item of arr) {
+        if (sugerencias.length >= 5) break;
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        sugerencias.push(item);
+      }
+    };
+
+    const inicio = await this.prisma.materiales.findMany({
+      where: {
+        AND: [
+          whereBase,
+          {
+            nombre: { startsWith: term, mode: 'insensitive' },
+          },
+        ],
+      },
+      select,
+      take: 5,
+    });
+    addUnique(inicio);
+
+    if (sugerencias.length < 5) {
+      const contieneTitulo = await this.prisma.materiales.findMany({
+        where: {
+          AND: [
+            whereBase,
+            {
+              nombre: {
+                contains: term,
+                mode: 'insensitive',
+              },
+            },
+            {
+              NOT: {
+                nombre: {
+                  startsWith: term,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          ],
+        },
+        select,
+        take: 5,
+      });
+      addUnique(contieneTitulo);
+    }
+
+    if (sugerencias.length < 5) {
+      const descripcionMatches = await this.prisma.materiales.findMany({
+        where: {
+          AND: [
+            whereBase,
+            {
+              descripcion: {
+                contains: term,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        },
+        select,
+        take: 5,
+      });
+      addUnique(descripcionMatches);
+    }
+
+    const listaResultados: AutocompleteResponseDto['listaResultados'] = [];
+
+
+    for (const mat of sugerencias) {
+      const promedioAgg = await this.prisma.calificaciones.aggregate({
+        where: { idMaterial: mat.id },
+        _avg: { calificacion: true },
+      });
+
+      const autorNombre = mat.usuarios
+        ? `${mat.usuarios.nombre} ${mat.usuarios.apellido}`.trim()
+        : null;
+
+      listaResultados.push({
+        id: mat.id,
+        titulo: mat.nombre,
+        autor: autorNombre,
+        materia: null, 
+        calificacionPromedio: promedioAgg._avg.calificacion ?? null,
+        descargas: mat.descargas,
+      });
+    }
+
+    return {
+      listaResultados,
+      contadorResultados,
+    };
   }
 }
