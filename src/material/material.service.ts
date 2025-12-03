@@ -14,7 +14,6 @@ import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
-import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 
@@ -26,7 +25,6 @@ export class MaterialService {
   private notification;        // Cola opcional para envío de mails
   private responseReceiver;    // Cola donde recibimos respuestas
   private readonly adminClient?: ServiceBusAdministrationClient;
-  private analyticsQueueEnsured = false;
   private readonly blobServiceClient: BlobServiceClient;
   private readonly containerClient: any;
   private readonly containerName = 'materials';
@@ -36,7 +34,7 @@ export class MaterialService {
 
   constructor(private readonly client: ServiceBusClient, private readonly prisma: PrismaService) {
     this.sender = this.client.createSender('material.process');
-    this.notification = this.client.createSender('mail.envio.rol');
+    this.notification = this.client.createSender('mail.envio.individual');
     this.responseReceiver = this.client.createReceiver('material.responses');
     // Admin client para operaciones de administración (crear/consultar queues)
     try {
@@ -53,79 +51,8 @@ export class MaterialService {
     });
 
     this.listenForResponses();
-    // Programar envío semanal de top materiales cada lunes
-    this.scheduleWeeklyTopMaterials();
   }
 
-  /**
-   * Programa la tarea semanal para enviar el top 5 de materiales cada lunes a las 08:00.
-   */
-  private scheduleWeeklyTopMaterials() {
-    const runWeekly = async () => {
-      try {
-        await this.sendWeeklyTopMaterialsEmail();
-      } catch (err) {
-        this.logger.error('Error enviando top materials semanal:', err as any);
-      }
-    };
-
-    const nextMondayAt8 = this.getNextWeekdayDate(1, 8, 0, 0); // 1 = Monday
-    const now = new Date();
-    const initialDelay = nextMondayAt8.getTime() - now.getTime();
-
-    // Si por alguna razón el delay es negativo, ejecutar inmediatamente
-    const safeInitialDelay = initialDelay > 0 ? initialDelay : 0;
-
-    // Programar la primera ejecución
-    setTimeout(() => {
-      // Ejecutar la tarea y luego programar intervalos semanales
-      runWeekly();
-      setInterval(runWeekly, 7 * 24 * 60 * 60 * 1000); // 7 días
-    }, safeInitialDelay);
-  }
-
-  /**
-   * Retorna la próxima fecha del día de la semana dado (0=Sunday,1=Monday...) a la hora especificada.
-   */
-  private getNextWeekdayDate(weekday: number, hour = 8, minute = 0, second = 0): Date {
-    const now = new Date();
-    const result = new Date(now);
-    result.setHours(hour, minute, second, 0);
-    const diff = (weekday + 7 - result.getDay()) % 7;
-    if (diff === 0 && result.getTime() <= now.getTime()) {
-      // Ya pasó la hora de hoy, programar para la próxima semana
-      result.setDate(result.getDate() + 7);
-    } else if (diff > 0) {
-      result.setDate(result.getDate() + diff);
-    }
-    return result;
-  }
-
-  /**
-   * Obtiene los top N materiales y envía una notificación por correo con el listado.
-   */
-  private async sendWeeklyTopMaterialsEmail() {
-    this.logger.log('Preparando envío semanal de top materiales...');
-    const topMaterials = await this.getPopularMaterials(5);
-
-    const resumen = `Top ${topMaterials.length} materiales de la semana`;
-
-    const cuerpo: any = {
-      rol: 'estudiante',
-      template: 'top5Semanal',
-      resumen,
-      guardar: false,
-      mandarCorreo: true,
-      topMaterials: topMaterials.map((m) => ({ id: m.userId,userName: m.userName, title: m.nombre, url: m.url, views: m.vistos, downloads: m.descargas })),
-    };
-
-    const message: ServiceBusMessage = {
-      body: cuerpo,
-    };
-
-    await this.notification.sendMessages(message);
-    this.logger.log('Envío semanal de top materiales encolado');
-  }
 
   /**
    * Listener permanente que consume mensajes desde material.responses
@@ -253,15 +180,8 @@ export class MaterialService {
 
   private waitForResponse(correlationId: string): Promise<RespuestaIADto> {
     return new Promise<RespuestaIADto>((resolve, reject) => {
-      // Timeout de 15 segundos
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(correlationId);
-        reject(new BadRequestException('Timeout: No se recibio respuesta de IA en 15 segundos'));
-      }, 15000);
-
       // Resolver con la respuesta de IA y limpiar timeout
       this.pendingRequests.set(correlationId, (response: RespuestaIADto) => {
-        clearTimeout(timeout);
         resolve(response);
       });
     });
@@ -303,7 +223,7 @@ export class MaterialService {
           subject
         );
         this.sendAnalysisMessage('', blobName, correlationId, 'save');
-        await this.enviarNotificacionNuevoMaterial(response);
+        await this.enviarNotificacion(response, materialData.userId, filename, "nuevoMaterialSubido");
         
         // Retornar respuesta exitosa 201 con formato especificado
         return {
@@ -395,15 +315,19 @@ export class MaterialService {
   }
 
   /**  * Envía una notificación a los estudiantes sobre un nuevo material subido */
-  async enviarNotificacionNuevoMaterial(response: RespuestaIADto) {
+  async enviarNotificacion(response: RespuestaIADto, userId: string, filename: string, template: string) {
+    const user = await this.prisma.usuarios.findUnique({where: {id: userId}});
+
     const cuerpo : NotificationDto= {
-      rol: 'estudiante',
-      template: 'nuevoMaterialSubido',
+      email: user?.email || 'estudiante',
+      nombre: user?.nombre || 'Estudiante',
+      template: template,
       resumen: `Se ha subido un nuevo materia de ${response.tema}`,
+      fileName: filename,
       tema: response.tema,
       materia: response.materia,
       guardar: true,
-      mandarCorreo: false,
+      mandarCorreo: true,
     }
 
     const Message : ServiceBusMessage= {
