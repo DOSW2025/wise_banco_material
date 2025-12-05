@@ -86,48 +86,24 @@ export class MaterialService {
    * Envía un PDF a IA y espera su respuesta vía correlationId
    */
   async validateMaterial(pdfBuffer: Buffer, materialData: CreateMaterialDto, originalName?: string): Promise<CreateMaterialResponseDto> {
-    const correlationId = uuid();
+    // Verificar que el usuario existe
+    await this.validateUserExists(materialData.userId);
 
-    // Calcular hash (SHA-256) y crear registro provisional en BD para evitar duplicados
+    const correlationId = uuid();
     const filename = materialData.title;
-    // Determinar extension desde el nombre original del archivo si está disponible
-    const extension = originalName ? path.extname(originalName).replace(/^\./, '').toLowerCase() : 'pdf';
-    const hash = createHash('sha256').update(pdfBuffer).digest('hex');
-    this.logger.log(`Hash calculado: ${hash}`);
+    const { hash, extension } = this.calculateHashAndExtension(pdfBuffer, originalName);
 
     // Verificar si ya existe un material con el mismo hash
-    const existingMaterial = await this.prisma.materiales.findFirst({
-      where: { hash },
-    });
-    if (existingMaterial) {
-      this.logger.warn(`Material duplicado detectado`);
-      throw new ConflictException('Material already exists with same content');
-    } 
+    await this.checkDuplicateHash(hash);
     
-    //Subir al blob
-    const blobName = `${correlationId}-${filename}`;
-    let fileUrl: string;
-    try {
-      fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
-    } catch (err) {
-      this.logger.error('Error subiendo PDF a Blob:', err as any);
-      throw new BadRequestException('Error almacenando PDF');
-    }
+    // Subir blob y obtener respuesta de IA
+    const { blobName, fileUrl, response } = await this.uploadAndAnalyze(
+      pdfBuffer,
+      correlationId,
+      filename,
+    );
 
-    //Enviar mensaje a la cola de IA
-    try {
-      await this.sendAnalysisMessage(fileUrl, blobName, correlationId, 'analysis');
-    } catch (err) {
-      this.logger.error('Error enviando mensaje a IA:', err as any);
-      // intentar limpiar blob si el envio falla
-      await this.deleteBlobSafe(blobName, correlationId);
-      throw new BadRequestException('Error enviando a IA');
-    }
-
-    //Esperar respuesta
-    const response: RespuestaIADto = await this.waitForResponse(correlationId);
-
-    //Manejar respuesta (guardar o eliminar) y retornar metadata del material
+    // Manejar respuesta (guardar o eliminar) y retornar metadata del material
     const materialResponse = await this.handleResponse(response,
       materialData.subject, {
         correlationId,
@@ -141,6 +117,70 @@ export class MaterialService {
     );
 
     return materialResponse;
+  }
+
+  /**
+   * Calcula hash SHA-256 y determina extensión del archivo
+   */
+  private calculateHashAndExtension(pdfBuffer: Buffer, originalName?: string): { hash: string; extension: string } {
+    const hash = createHash('sha256').update(pdfBuffer).digest('hex');
+    const extension = originalName ? path.extname(originalName).replace(/^\./, '').toLowerCase() : 'pdf';
+    this.logger.log(`Hash calculado: ${hash}`);
+    return { hash, extension };
+  }
+
+  /**
+   * Verifica si ya existe un material con el mismo hash (excluyendo materialId si se proporciona)
+   */
+  private async checkDuplicateHash(hash: string, excludeMaterialId?: string): Promise<void> {
+    const where = excludeMaterialId ? { hash, NOT: { id: excludeMaterialId } } : { hash };
+    const existingMaterial = await this.prisma.materiales.findFirst({ where });
+    
+    if (existingMaterial) {
+      this.logger.warn(`Material duplicado detectado`);
+      throw new ConflictException('Material already exists with same content');
+    }
+  }
+
+  /**
+   * Construye la URL completa del blob en Azure Storage
+   */
+  private buildBlobUrl(blobName: string): string {
+    return `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`;
+  }
+
+  /**
+   * Sube blob, envía a IA para análisis y espera respuesta
+   */
+  private async uploadAndAnalyze(
+    pdfBuffer: Buffer,
+    correlationId: string,
+    filename: string,
+  ): Promise<{ blobName: string; fileUrl: string; response: RespuestaIADto }> {
+    const blobName = `${correlationId}-${filename}`;
+    
+    // Subir al blob
+    let fileUrl: string;
+    try {
+      fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
+    } catch (err) {
+      this.logger.error('Error subiendo PDF a Blob:', err as any);
+      throw new BadRequestException('Error almacenando PDF');
+    }
+
+    // Enviar mensaje a la cola de IA
+    try {
+      await this.sendAnalysisMessage(fileUrl, blobName, correlationId, 'analysis');
+    } catch (err) {
+      this.logger.error('Error enviando mensaje a IA:', err as any);
+      await this.deleteBlobSafe(blobName, correlationId);
+      throw new BadRequestException('Error enviando a IA');
+    }
+
+    // Esperar respuesta
+    const response = await this.waitForResponse(correlationId);
+    
+    return { blobName, fileUrl, response };
   }
 
   /**
@@ -210,7 +250,7 @@ export class MaterialService {
             id: correlationId,
             nombre: filename,
             userId: materialData.userId,
-            url: `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`,
+            url: this.buildBlobUrl(blobName),
             extension: ctx.extension,
             descripcion: materialData.description,
             vistos: 0,
@@ -232,7 +272,7 @@ export class MaterialService {
           description: materialData.description,
           subject: materialData.subject,
           filename,
-          fileUrl: `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`,
+          fileUrl: this.buildBlobUrl(blobName),
           createdAt: new Date(),
         };
       } catch (err) {
@@ -917,6 +957,7 @@ async updateMaterialVersion(
   materialData: CreateMaterialDto,
   originalName?: string,
 ): Promise<CreateMaterialResponseDto> {
+  // Verificar que el material existe
   const existing = await this.prisma.materiales.findUnique({
     where: { id: materialId },
   });
@@ -926,55 +967,24 @@ async updateMaterialVersion(
     throw new NotFoundException('Material no encontrado');
   }
 
-  const userExists = await this.prisma.usuarios.findUnique({
-    where: { id: materialData.userId },
-  });
-  if (!userExists) {
-    throw new BadRequestException(
-      `El userId ${materialData.userId} no existe en la base de datos`,
-    );
-  }
+  // Verificar que el usuario existe
+  await this.validateUserExists(materialData.userId);
 
   const correlationId = uuid();
   const filename = materialData.title;
+  const { hash, extension } = this.calculateHashAndExtension(pdfBuffer, originalName);
 
-  const extension = originalName
-    ? path.extname(originalName).replace(/^\./, '').toLowerCase()
-    : 'pdf';
+  // Verificar hash duplicado (excluyendo el material actual)
+  await this.checkDuplicateHash(hash, materialId);
 
-  const hash = createHash('sha256').update(pdfBuffer).digest('hex');
-  this.logger.log(`Hash calculado para actualización de material ${materialId}: ${hash}`);
+  // Subir blob y obtener respuesta de IA
+  const { blobName, response } = await this.uploadAndAnalyze(
+    pdfBuffer,
+    correlationId,
+    filename,
+  );
 
-  const duplicate = await this.prisma.materiales.findFirst({
-    where: { hash, NOT: { id: materialId } },
-  });
-
-  if (duplicate) {
-    this.logger.warn(
-      `Material duplicado detectado al actualizar versión (materialId=${materialId})`,
-    );
-    throw new ConflictException('Material already exists with same content');
-  }
-
-  const blobName = `${correlationId}-${filename}`;
-  let fileUrl: string;
-  try {
-    fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
-  } catch (err) {
-    this.logger.error('Error subiendo PDF a Blob (actualización):', err as any);
-    throw new BadRequestException('Error almacenando PDF');
-  }
-
-  try {
-    await this.sendAnalysisMessage(fileUrl, blobName, correlationId, 'analysis');
-  } catch (err) {
-    this.logger.error('Error enviando mensaje a IA (actualización):', err as any);
-    await this.deleteBlobSafe(blobName, correlationId);
-    throw new BadRequestException('Error enviando a IA');
-  }
-
-  const response: RespuestaIADto = await this.waitForResponse(correlationId);
-
+  // Validar respuesta de IA
   if (!response.valid) {
     const reason = response.detalles;
     this.logger.log(
@@ -992,14 +1002,15 @@ async updateMaterialVersion(
     `Material validado como VÁLIDO por IA en actualización (correlationId=${correlationId})`,
   );
 
-  const newFileUrl = `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`;
+  const newFileUrl = this.buildBlobUrl(blobName);
 
+  // Eliminar tags anteriores y guardar nuevos
   await this.prisma.materialTags.deleteMany({
     where: { idMaterial: materialId },
   });
-
   await this.guardarTags(response.tags, materialId, materialData.subject);
 
+  // Actualizar material en BD
   const updated = await this.prisma.materiales.update({
     where: { id: materialId },
     data: {
@@ -1014,18 +1025,8 @@ async updateMaterialVersion(
 
   await this.sendAnalysisMessage('', blobName, correlationId, 'save');
 
-  try {
-    if (existing.url) {
-      const oldUrl = new URL(existing.url);
-      const parts = oldUrl.pathname.split('/');
-      const oldBlobName = decodeURIComponent(parts.slice(2).join('/'));
-      await this.deleteBlobSafe(oldBlobName, materialId);
-    }
-  } catch (err) {
-    this.logger.warn(
-      `No se pudo eliminar el blob anterior para material ${materialId}: ${(err as Error).message}`,
-    );
-  }
+  // Eliminar blob anterior
+  await this.deleteOldBlob(existing.url, materialId);
 
   return {
     id: updated.id,
@@ -1036,6 +1037,38 @@ async updateMaterialVersion(
     fileUrl: newFileUrl,
     createdAt: existing.createdAt, 
   };
+}
+
+/**
+ * Valida que un usuario existe en la base de datos
+ */
+private async validateUserExists(userId: string): Promise<void> {
+  const userExists = await this.prisma.usuarios.findUnique({
+    where: { id: userId },
+  });
+  if (!userExists) {
+    throw new BadRequestException(
+      `El userId ${userId} no existe en la base de datos`,
+    );
+  }
+}
+
+/**
+ * Elimina el blob anterior de un material de forma segura
+ */
+private async deleteOldBlob(oldUrl: string | null, materialId: string): Promise<void> {
+  try {
+    if (oldUrl) {
+      const url = new URL(oldUrl);
+      const parts = url.pathname.split('/');
+      const oldBlobName = decodeURIComponent(parts.slice(2).join('/'));
+      await this.deleteBlobSafe(oldBlobName, materialId);
+    }
+  } catch (err) {
+    this.logger.warn(
+      `No se pudo eliminar el blob anterior para material ${materialId}: ${(err as Error).message}`,
+    );
+  }
 }
 
 }

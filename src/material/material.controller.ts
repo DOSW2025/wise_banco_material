@@ -35,6 +35,21 @@ export class MaterialController {
   ) {}
 
   /**
+   * Valida que se haya enviado un archivo y que sea un PDF
+   */
+  private validatePdfFile(file: any): void {
+    if (!file) {
+      throw new BadRequestException(
+        'Archivo PDF requerido en el campo "file"',
+      );
+    }
+
+    if (file.mimetype !== 'application/pdf') {
+      throw new BadRequestException('Solo se permiten archivos PDF');
+    }
+  }
+
+  /**
    * Endpoint para subir un nuevo material en formato PDF.
    *
    * Reglas de validacion:
@@ -115,25 +130,7 @@ export class MaterialController {
     @UploadedFile() file: any,
     @Body() body: CreateMaterialDto,
   ): Promise<CreateMaterialResponseDto> {
-    // Validacion: debe enviarse un archivo
-    if (!file) {
-      throw new BadRequestException(
-        'Archivo PDF requerido en el campo "file"',
-      );
-    }
-
-    // Validación: mimetype debe ser PDF
-    if (file.mimetype !== 'application/pdf') {
-      throw new BadRequestException('Solo se permiten archivos PDF');
-    }
-
-    // Validacion: userId debe existir en la base de datos
-    const userExists = await this.prisma.usuarios.findUnique({ 
-      where: { id: body.userId } 
-    });
-    if (!userExists) {
-      throw new BadRequestException(`El userId ${body.userId} no existe en la base de datos`);
-    }
+    this.validatePdfFile(file);
 
     this.logger.log(`Archivo '${file.originalname}' de tamaño ${file.size} bytes para el usuario ${body.userId}`,);
 
@@ -548,15 +545,7 @@ async actualizarMaterialVersion(
   @UploadedFile() file: any,
   @Body() body: CreateMaterialDto,
 ): Promise<CreateMaterialResponseDto> {
-  if (!file) {
-    throw new BadRequestException(
-      'Archivo PDF requerido en el campo "file"',
-    );
-  }
-
-  if (file.mimetype !== 'application/pdf') {
-    throw new BadRequestException('Solo se permiten archivos PDF');
-  }
+  this.validatePdfFile(file);
 
   this.logger.log(
     `Actualizando material ${materialId} con archivo '${file.originalname}' (userId=${body.userId})`,
