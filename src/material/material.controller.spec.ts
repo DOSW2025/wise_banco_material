@@ -183,4 +183,95 @@ describe('MaterialController', () => {
       expect(result).toBe(mockResult);
     });
   });
-});
+  });
+
+  describe('actualizarMaterialVersion', () => {
+    let controller: MaterialController;
+    let serviceMock: {
+      updateMaterialVersion: jest.Mock;
+    };
+
+    beforeEach(() => {
+      serviceMock = {
+        updateMaterialVersion: jest.fn(),
+      };
+
+      controller = new MaterialController(
+        serviceMock as any,
+        {} as any,    // prisma mock, no se usa en estas pruebas
+      );
+    });
+
+    it('debería lanzar error si no se envía archivo', async () => {
+      const body: any = {
+        title: 'Nuevo título',
+        subject: 'Matemáticas',
+        userId: 'user-123',
+      };
+
+      await expect(
+        controller.actualizarMaterialVersion('mat-1', undefined as any, body),
+      ).rejects.toThrow('Archivo PDF requerido en el campo "file"');
+    });
+
+    it('debería lanzar error si el archivo no es PDF', async () => {
+      const fakeFile = {
+        mimetype: 'image/png',
+        originalname: 'imagen.png',
+        size: 1234,
+        buffer: Buffer.from('fake'),
+      };
+
+      const body: any = {
+        title: 'Nuevo título',
+        subject: 'Matemáticas',
+        userId: 'user-123',
+      };
+
+      await expect(
+        controller.actualizarMaterialVersion('mat-1', fakeFile as any, body),
+      ).rejects.toThrow('Solo se permiten archivos PDF');
+    });
+
+    it('debería delegar en materialService.updateMaterialVersion en el caso feliz', async () => {
+      const fakeFile = {
+        mimetype: 'application/pdf',
+        originalname: 'nuevo.pdf',
+        size: 2048,
+        buffer: Buffer.from('%PDF-1.4....'),
+      };
+
+      const body: any = {
+        title: 'Nuevo título',
+        description: 'Versión actualizada',
+        subject: 'Matemáticas',
+        userId: 'user-123',
+      };
+
+      const mockResult = {
+        id: 'mat-1',
+        title: body.title,
+        description: body.description,
+        subject: body.subject,
+        filename: body.title,
+        fileUrl: 'https://fake-url/nuevo.pdf',
+        createdAt: new Date(),
+      };
+
+      serviceMock.updateMaterialVersion.mockResolvedValue(mockResult);
+
+      const result = await controller.actualizarMaterialVersion(
+        'mat-1',
+        fakeFile as any,
+        body,
+      );
+
+      expect(serviceMock.updateMaterialVersion).toHaveBeenCalledWith(
+        'mat-1',
+        fakeFile.buffer,
+        body,
+        fakeFile.originalname,
+      );
+      expect(result).toBe(mockResult);
+    });
+  });

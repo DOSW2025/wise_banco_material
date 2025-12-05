@@ -1,4 +1,4 @@
-import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,Put} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,6 +33,21 @@ export class MaterialController {
     private readonly materialService: MaterialService,
     private prisma: PrismaService,
   ) {}
+
+  /**
+   * Valida que se haya enviado un archivo y que sea un PDF
+   */
+  private validatePdfFile(file: any): void {
+    if (!file) {
+      throw new BadRequestException(
+        'Archivo PDF requerido en el campo "file"',
+      );
+    }
+
+    if (file.mimetype !== 'application/pdf') {
+      throw new BadRequestException('Solo se permiten archivos PDF');
+    }
+  }
 
   /**
    * Endpoint para subir un nuevo material en formato PDF.
@@ -115,25 +130,7 @@ export class MaterialController {
     @UploadedFile() file: any,
     @Body() body: CreateMaterialDto,
   ): Promise<CreateMaterialResponseDto> {
-    // Validacion: debe enviarse un archivo
-    if (!file) {
-      throw new BadRequestException(
-        'Archivo PDF requerido en el campo "file"',
-      );
-    }
-
-    // Validación: mimetype debe ser PDF
-    if (file.mimetype !== 'application/pdf') {
-      throw new BadRequestException('Solo se permiten archivos PDF');
-    }
-
-    // Validacion: userId debe existir en la base de datos
-    const userExists = await this.prisma.usuarios.findUnique({ 
-      where: { id: body.userId } 
-    });
-    if (!userExists) {
-      throw new BadRequestException(`El userId ${body.userId} no existe en la base de datos`);
-    }
+    this.validatePdfFile(file);
 
     this.logger.log(`Archivo '${file.originalname}' de tamaño ${file.size} bytes para el usuario ${body.userId}`,);
 
@@ -463,4 +460,103 @@ export class MaterialController {
     return this.materialService.autocompleteMaterials(query, materia, autor);
   }
 
+  /**
+ * Endpoint para actualizar la versión de un material existente.
+ * - Reemplaza el archivo PDF en Blob Storage.
+ * - Actualiza la metadata del material y sus tags.
+ */
+@Put(':id')
+@UseInterceptors(FileInterceptor('file'))
+@UsePipes(new ValidationPipe({ transform: true }))
+@ApiOperation({
+  summary: 'Actualizar versión de un material',
+  description:
+    'Reemplaza el archivo PDF y actualiza la metadata de un material existente. ' +
+    'El archivo debe enviarse en el campo `file` (multipart/form-data).',
+})
+@ApiConsumes('multipart/form-data')
+@ApiParam({
+  name: 'id',
+  description: 'ID del material a actualizar',
+  example: 'abc123-def456',
+})
+@ApiBody({
+  description:
+    'Datos para actualizar el material. Incluye el archivo PDF y la nueva metadata.',
+  schema: {
+    type: 'object',
+    properties: {
+      file: {
+        type: 'string',
+        format: 'binary',
+        description: 'Nuevo archivo PDF a subir (campo `file`).',
+      },
+      title: {
+        type: 'string',
+        description: 'Nuevo título del material (mínimo 3 caracteres).',
+        example: 'Introducción a Cálculo Diferencial - Versión 2',
+        minLength: 3,
+      },
+      description: {
+        type: 'string',
+        description: 'Nueva descripción opcional del material (máximo 300 caracteres).',
+        example: 'Versión actualizada del material de estudio para primer parcial',
+        maxLength: 300,
+        nullable: true,
+      },
+      subject: {
+        type: 'string',
+        description: 'Materia o tema del material.',
+        example: 'Matemáticas',
+      },
+      userId: {
+        type: 'string',
+        description:
+          'ID del usuario que realiza la actualización. No cambia la propiedad del material en BD.',
+        example: 'user-123',
+      },
+    },
+    required: ['file', 'title', 'subject', 'userId'],
+  },
+})
+@ApiResponse({
+  status: 200,
+  description: 'Material actualizado correctamente.',
+  type: CreateMaterialResponseDto,
+})
+@ApiResponse({
+  status: 400,
+  description: 'Validación fallida. Campos inválidos o archivo no es PDF.',
+})
+@ApiResponse({
+  status: 404,
+  description: 'Material no encontrado.',
+})
+@ApiResponse({
+  status: 409,
+  description: 'Otro material ya existe con el mismo contenido (hash duplicado).',
+})
+@ApiResponse({
+  status: 422,
+  description: 'PDF falló la validación automatizada de IA.',
+})
+async actualizarMaterialVersion(
+  @Param('id') materialId: string,
+  @UploadedFile() file: any,
+  @Body() body: CreateMaterialDto,
+): Promise<CreateMaterialResponseDto> {
+  this.validatePdfFile(file);
+
+  this.logger.log(
+    `Actualizando material ${materialId} con archivo '${file.originalname}' (userId=${body.userId})`,
+  );
+
+  return this.materialService.updateMaterialVersion(
+    materialId,
+    file.buffer,
+    body,
+    file.originalname,
+  );
+}
+  
 }

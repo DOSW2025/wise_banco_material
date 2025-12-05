@@ -13,7 +13,7 @@ export class NotificationDto {
 
     @IsOptional()
     @IsString()
-    nombre?: string;
+    name?: string;
 
 
     @IsString()
