@@ -242,7 +242,7 @@ export class MaterialService {
         throw new BadRequestException('Error guardando material válido');
       }
     } else {
-      const reason = response.reason;
+      const reason = response.detalles;
       this.logger.log(
         `Material validado como NO VÁLIDO por IA (correlationId=${correlationId})${
           reason ? ` - motivo: ${reason}` : ''
@@ -320,7 +320,7 @@ export class MaterialService {
 
     const cuerpo : NotificationDto= {
       email: user?.email || 'estudiante',
-      nombre: user?.nombre || 'Estudiante',
+      name: user?.nombre || 'Estudiante',
       template: template,
       resumen: `Se ha subido un nuevo materia de ${response.tema}`,
       fileName: filename,
