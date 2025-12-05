@@ -976,7 +976,7 @@ async updateMaterialVersion(
   const response: RespuestaIADto = await this.waitForResponse(correlationId);
 
   if (!response.valid) {
-    const reason = response.reason;
+    const reason = response.detalles;
     this.logger.log(
       `Material actualizado marcado como NO VÁLIDO por IA (correlationId=${correlationId})` +
         (reason ? ` - motivo: ${reason}` : ''),
