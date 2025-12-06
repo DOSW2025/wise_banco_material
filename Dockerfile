@@ -1,36 +1,41 @@
-# Stage 1: Build
+# ---------- STAGE 1: Builder ----------
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copia los archivos de dependencias
+# Copiamos únicamente package.json + lock para instalar dependencias rápido
 COPY package*.json ./
 
-# Instala todas las dependencias (incluidas las de desarrollo)
+# Copiar carpeta Prisma ANTES de instalar dependencias (postinstall necesita schema.prisma)
+COPY prisma ./prisma
+
+# Instalar TODAS las dependencias (incluidas dev)
 RUN npm ci
 
-# Copia el código fuente y configuraciones
+# Copiar el resto del código
 COPY . .
 
-# Compila el proyecto NestJS
+# Compilar NestJS
 RUN npm run build
 
-# Stage 2: Production
+
+# ---------- STAGE 2: Production ----------
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Copia los archivos de dependencias
+# Copiamos package.json y lock para instalar dependencias de producción
 COPY package*.json ./
 
-# Instala solo dependencias de producción
+# Copiar otra vez Prisma → necesario porque postinstall corre aquí también
+COPY prisma ./prisma
+
+# Instalar solo dependencias necesarias para producción
 RUN npm ci --omit=dev
 
-# Copia los archivos compilados desde el stage de build
+# Copiar build generado en el stage anterior
 COPY --from=builder /app/dist ./dist
 
-# Expone el puerto 3000
 EXPOSE 3000
 
-# Comando por defecto
 CMD ["node", "dist/main"]
