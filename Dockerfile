@@ -3,43 +3,31 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copia archivos de dependencias
 COPY package*.json ./
-
-# Instala TODAS las dependencias (incluye prisma y devDeps)
 RUN npm ci
 
-# Copia el código fuente y configuraciones
 COPY . .
 
-# Genera Prisma Client
+# Generar Prisma Client (antes del build)
 RUN npx prisma generate
 
-# Compila el proyecto
 RUN npm run build
-
 
 # Stage 2: Production
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Copia solo package.json para deps de producción
-COPY package*.json ./
+# Evitar que el postinstall (prisma generate) se ejecute aquí
+ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
 
-# Instala solo dependencias de producción
+COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Copia Prisma Client generado en el builder
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-
-# Copia archivos compilados
+# Copiar dist y prisma client desde el builder
 COPY --from=builder /app/dist ./dist
-
-# Si usas seed, opcional
-# COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 EXPOSE 3000
-
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/main"]
