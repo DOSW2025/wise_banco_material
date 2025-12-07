@@ -8,7 +8,6 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
-import { MaterialStatsDto } from '../pdf-export/dto/material-stats.dto';
 import { MaterialDetailDto } from './dto/material-detail.dto';
 import { DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import { CreateRatingDto } from './dto/create-rating.dto';
