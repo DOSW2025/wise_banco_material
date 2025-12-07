@@ -9,6 +9,9 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    
+    env:
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/db?schema=public"
 
     steps:
       - name: Checkout repo
@@ -25,6 +28,7 @@ jobs:
       - name: Build NestJS
         run: npm run build
 
+      # ⚠ Ya NO generamos ZIP porque Universal Packages no lo admite
       - name: Prepare artifact folder
         run: |
           mkdir artifact
