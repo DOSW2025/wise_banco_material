@@ -25,7 +25,6 @@ jobs:
       - name: Build NestJS
         run: npm run build
 
-      # ⚠ Ya NO generamos ZIP porque Universal Packages no lo admite
       - name: Prepare artifact folder
         run: |
           mkdir artifact
@@ -55,7 +54,6 @@ jobs:
             --description "Build desde GitHub Actions" \
             --path artifact
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           AZURE_DEVOPS_EXT_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
           AZURE_DEVOPS_EXT_ARTIFACTTOOL_OVERRIDE_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
           AZURE_ORG_URL: ${{ secrets.AZURE_ORG_URL }}
