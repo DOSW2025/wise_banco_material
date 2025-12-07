@@ -1,0 +1,62 @@
+name: Publish Artifact to Azure DevOps
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build NestJS
+        run: npm run build
+
+      # ⚠ Ya NO generamos ZIP porque Universal Packages no lo admite
+      - name: Prepare artifact folder
+        run: |
+          mkdir artifact
+          cp -r dist artifact/
+
+      - name: Get next version
+        id: version
+        run: |
+          DATE=$(date +'%Y%m%d')
+          BUILD=${GITHUB_RUN_NUMBER}
+          VERSION="1.0.${DATE}${BUILD}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Install Azure CLI
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      - name: Publish to Azure Artifacts
+        run: |
+          az artifacts universal publish \
+            --organization "$AZURE_ORG_URL" \
+            --project "$AZURE_PROJECT" \
+            --scope project \
+            --feed "$AZURE_FEED_NAME" \
+            --name "wise_banco_material" \
+            --version "${{ steps.version.outputs.version }}" \
+            --description "Build desde GitHub Actions" \
+            --path artifact
+        env:
+          AZURE_DEVOPS_EXT_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_DEVOPS_EXT_ARTIFACTTOOL_OVERRIDE_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_ORG_URL: ${{ secrets.AZURE_ORG_URL }}
+          AZURE_PROJECT: ${{ secrets.AZURE_PROJECT }}
+          AZURE_FEED_NAME: ${{ secrets.AZURE_FEED_NAME }}
