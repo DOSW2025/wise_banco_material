@@ -68,4 +68,11 @@ export class Material {
     @Column({ type: 'varchar', length: 64 })
     hash!: string;
 
+    /**
+     * Extensión del archivo del material.
+     */
+    @Index()
+    @Column({ type: 'varchar', length: 10 })
+    extension!: string;
+
 }

@@ -28,6 +28,6 @@ export class RespuestaIADto {
     @ApiProperty({ description: 'Motivo por el cual el material no es válido', required: false })
     @IsOptional()
     @IsString()
-    reason?: string;
+    detalles?: string;
 
 }

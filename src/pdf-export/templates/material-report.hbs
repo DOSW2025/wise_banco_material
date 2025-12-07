@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 40px;
+      color: #333;
+    }
+
+    h1 {
+      text-align: center;
+      color: #003366;
+      letter-spacing: 1px;
+      margin-bottom: 5px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #555;
+      font-size: 13px;
+      margin-bottom: 30px;
+    }
+
+    .section-title {
+      margin-top: 35px;
+      font-size: 17px;
+      color: #003366;
+      border-bottom: 2px solid #003366;
+      padding-bottom: 5px;
+    }
+
+    .info-box {
+      background: #f4f8ff;
+      border-left: 5px solid #003366;
+      border-right: 5px solid #003366;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+
+    .stats-table th {
+      background: #003366;
+      color: white;
+      padding: 10px;
+      text-align: left;
+    }
+
+    .stats-table td {
+      padding: 12px;
+      border: 1px solid #cfd6e1;
+      font-size: 14px;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 6px 12px;
+      margin: 4px;
+      border-radius: 4px;
+      background: #ebf3ff;
+      color: #003366;
+      border: 1px solid #b9d3ff;
+      font-size: 13px;
+    }
+
+    .footer {
+      margin-top: 40px;
+      text-align: center;
+      color: #777;
+      font-size: 12px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>Reporte de Material</h1>
+  <div class="subtitle">Informe generado automáticamente por ECIWISE+</div>
+
+  <div class="section-title">Información General</div>
+
+  <div class="info-box">
+    <div><strong>ID:</strong> {{id}}</div>
+    <div><strong>Nombre:</strong> {{nombre}}</div>
+    <div><strong>Estudiante:</strong> {{userName}}</div>
+    <div><strong>Descripción:</strong> {{descripcion}}</div>
+    <div><strong>URL:</strong> {{url}}</div>
+    <div><strong>Creado:</strong> {{createdAt}}</div>
+    <div><strong>Última actualización:</strong> {{updatedAt}}</div>
+  </div>
+
+  <div class="section-title">Estadísticas del Material</div>
+
+  <table class="stats-table">
+    <tr>
+      <th>Vistas</th>
+      <th>Descargas</th>
+      <th>Calificación Promedio</th>
+      <th>Total Comentarios</th>
+    </tr>
+    <tr>
+      <td>{{vistos}}</td>
+      <td>{{descargas}}</td>
+      <td>{{calificacionPromedio}}</td>
+      <td>{{totalComentarios}}</td>
+    </tr>
+  </table>
+
+  <div class="section-title">Etiquetas</div>
+
+  {{#if tags.length}}
+    {{#each tags}}
+      <span class="tag">{{this}}</span>
+    {{/each}}
+  {{else}}
+    <div>No hay etiquetas asociadas</div>
+  {{/if}}
+
+  <div class="footer">
+    ECIWISE+ — Plataforma de Aprendizaje Colaborativo — {{year}}
+  </div>
+
+</body>
+</html>

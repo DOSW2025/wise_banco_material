@@ -26,30 +26,6 @@ model MaterialTags {
   @@index([idMaterial])
 }
 
-model Materiales {
-  id             String           @id
-  nombre         String
-  userId         String
-  url            String
-  descripcion    String?
-  vistos         Int              @default(0)
-  descargas      Int              @default(0)
-  createdAt      DateTime         @default(now())
-  hash           String?          @unique
-  updatedAt      DateTime
-  Calificaciones Calificaciones[]
-  MaterialTags   MaterialTags[]
-  usuarios       usuarios         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  Resumen        Resumen[]
-}
-
-model Resumen {
-  id         Int        @id @default(autoincrement())
-  idMaterial String
-  resumen    String
-  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
-}
-
 model Tags {
   id           Int            @id @default(autoincrement())
   tag          String         @unique
@@ -98,18 +74,6 @@ model estados_usuario {
   usuarios    usuarios[]
 }
 
-model grupo_chat {
-  id                 String               @id
-  nombre             String               @unique
-  creadoPor          String
-  fechaCreacion      DateTime             @default(now())
-  fechaActualizacion DateTime
-  mensaje_chat       mensaje_chat[]
-  miembro_grupo_chat miembro_grupo_chat[]
-
-  @@index([nombre])
-}
-
 model materia {
   id            String          @id
   codigo        String          @unique
@@ -119,33 +83,6 @@ model materia {
   tutoria       tutoria[]
 
   @@index([codigo])
-}
-
-model mensaje_chat {
-  id            String     @id
-  grupoId       String
-  usuarioId     String
-  contenido     String
-  fechaCreacion DateTime   @default(now())
-  fechaEdicion  DateTime?
-  grupo_chat    grupo_chat @relation(fields: [grupoId], references: [id], onDelete: Cascade)
-  usuarios      usuarios   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-
-  @@index([grupoId, fechaCreacion])
-  @@index([usuarioId])
-}
-
-model miembro_grupo_chat {
-  id         String     @id
-  grupoId    String
-  usuarioId  String
-  fechaUnion DateTime   @default(now())
-  grupo_chat grupo_chat @relation(fields: [grupoId], references: [id], onDelete: Cascade)
-  usuarios   usuarios   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-
-  @@unique([grupoId, usuarioId])
-  @@index([grupoId])
-  @@index([usuarioId])
 }
 
 model notifications {
@@ -236,6 +173,73 @@ model tutoria {
   @@index([materiaId])
   @@index([status])
   @@index([tutorId, scheduledAt])
+}
+
+model Materiales {
+  id             String           @id
+  nombre         String
+  userId         String
+  url            String
+  extension      String
+  descripcion    String?
+  vistos         Int              @default(0)
+  descargas      Int              @default(0)
+  createdAt      DateTime         @default(now())
+  hash           String?          @unique
+  updatedAt      DateTime
+  Calificaciones Calificaciones[]
+  MaterialTags   MaterialTags[]
+  usuarios       usuarios         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Resumen        Resumen[]
+
+  @@index([extension])
+  @@index([userId])
+}
+
+model Resumen {
+  id         Int        @id @default(autoincrement())
+  idMaterial String
+  resumen    String
+  Materiales Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+}
+
+model grupo_chat {
+  id                 String               @id
+  nombre             String               @unique
+  creadoPor          String
+  fechaCreacion      DateTime             @default(now())
+  fechaActualizacion DateTime
+  mensaje_chat       mensaje_chat[]
+  miembro_grupo_chat miembro_grupo_chat[]
+
+  @@index([nombre])
+}
+
+model mensaje_chat {
+  id            String     @id
+  grupoId       String
+  usuarioId     String
+  contenido     String
+  fechaCreacion DateTime   @default(now())
+  fechaEdicion  DateTime?
+  grupo_chat    grupo_chat @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  usuarios      usuarios   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([grupoId, fechaCreacion])
+  @@index([usuarioId])
+}
+
+model miembro_grupo_chat {
+  id         String     @id
+  grupoId    String
+  usuarioId  String
+  fechaUnion DateTime   @default(now())
+  grupo_chat grupo_chat @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  usuarios   usuarios   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([grupoId, usuarioId])
+  @@index([grupoId])
+  @@index([usuarioId])
 }
 
 enum EstadoSesion {

@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, Logger, ConflictException, Unprocessab
 import { ServiceBusClient, ServiceBusMessage, ServiceBusAdministrationClient } from '@azure/service-bus';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { createHash } from 'node:crypto';
+import * as path from 'path';
 import { envs } from '../config';
 import { RespuestaIADto } from './dto/respuestIA.dto';
 import { NotificationDto } from 'src/material/dto/notificacion.dto';
@@ -12,7 +13,9 @@ import { MaterialDto } from './dto/material.dto';
 import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
-import { MaterialStatsDto } from '../pdf-export/dto/material-stats.dto';
+import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
+import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
+import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 
 @Injectable()
 export class MaterialService {
@@ -22,7 +25,6 @@ export class MaterialService {
   private notification;        // Cola opcional para envío de mails
   private responseReceiver;    // Cola donde recibimos respuestas
   private readonly adminClient?: ServiceBusAdministrationClient;
-  private analyticsQueueEnsured = false;
   private readonly blobServiceClient: BlobServiceClient;
   private readonly containerClient: any;
   private readonly containerName = 'materials';
@@ -32,7 +34,7 @@ export class MaterialService {
 
   constructor(private readonly client: ServiceBusClient, private readonly prisma: PrismaService) {
     this.sender = this.client.createSender('material.process');
-    this.notification = this.client.createSender('mail.envio.rol');
+    this.notification = this.client.createSender('mail.envio.individual');
     this.responseReceiver = this.client.createReceiver('material.responses');
     // Admin client para operaciones de administración (crear/consultar queues)
     try {
@@ -49,79 +51,8 @@ export class MaterialService {
     });
 
     this.listenForResponses();
-    // Programar envío semanal de top materiales cada lunes
-    this.scheduleWeeklyTopMaterials();
   }
 
-  /**
-   * Programa la tarea semanal para enviar el top 5 de materiales cada lunes a las 08:00.
-   */
-  private scheduleWeeklyTopMaterials() {
-    const runWeekly = async () => {
-      try {
-        await this.sendWeeklyTopMaterialsEmail();
-      } catch (err) {
-        this.logger.error('Error enviando top materials semanal:', err as any);
-      }
-    };
-
-    const nextMondayAt8 = this.getNextWeekdayDate(1, 8, 0, 0); // 1 = Monday
-    const now = new Date();
-    const initialDelay = nextMondayAt8.getTime() - now.getTime();
-
-    // Si por alguna razón el delay es negativo, ejecutar inmediatamente
-    const safeInitialDelay = initialDelay > 0 ? initialDelay : 0;
-
-    // Programar la primera ejecución
-    setTimeout(() => {
-      // Ejecutar la tarea y luego programar intervalos semanales
-      runWeekly();
-      setInterval(runWeekly, 7 * 24 * 60 * 60 * 1000); // 7 días
-    }, safeInitialDelay);
-  }
-
-  /**
-   * Retorna la próxima fecha del día de la semana dado (0=Sunday,1=Monday...) a la hora especificada.
-   */
-  private getNextWeekdayDate(weekday: number, hour = 8, minute = 0, second = 0): Date {
-    const now = new Date();
-    const result = new Date(now);
-    result.setHours(hour, minute, second, 0);
-    const diff = (weekday + 7 - result.getDay()) % 7;
-    if (diff === 0 && result.getTime() <= now.getTime()) {
-      // Ya pasó la hora de hoy, programar para la próxima semana
-      result.setDate(result.getDate() + 7);
-    } else if (diff > 0) {
-      result.setDate(result.getDate() + diff);
-    }
-    return result;
-  }
-
-  /**
-   * Obtiene los top N materiales y envía una notificación por correo con el listado.
-   */
-  private async sendWeeklyTopMaterialsEmail() {
-    this.logger.log('Preparando envío semanal de top materiales...');
-    const topMaterials = await this.getPopularMaterials(5);
-
-    const resumen = `Top ${topMaterials.length} materiales de la semana`;
-
-    const cuerpo: any = {
-      rol: 'estudiante',
-      template: 'top5Semanal',
-      resumen,
-      guardar: false,
-      mandarCorreo: true,
-      topMaterials: topMaterials.map((m) => ({ id: m.userId,userName: m.userName, title: m.nombre, url: m.url, views: m.vistos, downloads: m.descargas })),
-    };
-
-    const message: ServiceBusMessage = {
-      body: cuerpo,
-    };
-
-    await this.notification.sendMessages(message);
-    this.logger.log('Envío semanal de top materiales encolado');
-  }
 
   /**
    * Listener permanente que consume mensajes desde material.responses
@@ -154,25 +85,81 @@ export class MaterialService {
   /**
    * Envía un PDF a IA y espera su respuesta vía correlationId
    */
-  async validateMaterial(pdfBuffer: Buffer, materialData: CreateMaterialDto): Promise<CreateMaterialResponseDto> {
-    const correlationId = uuid();
+  async validateMaterial(pdfBuffer: Buffer, materialData: CreateMaterialDto, originalName?: string): Promise<CreateMaterialResponseDto> {
+    // Verificar que el usuario existe
+    await this.validateUserExists(materialData.userId);
 
-    // Calcular hash (SHA-256) y crear registro provisional en BD para evitar duplicados
+    const correlationId = uuid();
     const filename = materialData.title;
-    const hash = createHash('sha256').update(pdfBuffer).digest('hex');
-    this.logger.log(`Hash calculado: ${hash}`);
+    const { hash, extension } = this.calculateHashAndExtension(pdfBuffer, originalName);
 
     // Verificar si ya existe un material con el mismo hash
-    const existingMaterial = await this.prisma.materiales.findFirst({
-      where: { hash },
-    });
+    await this.checkDuplicateHash(hash);
+    
+    // Subir blob y obtener respuesta de IA
+    const { blobName, fileUrl, response } = await this.uploadAndAnalyze(
+      pdfBuffer,
+      correlationId,
+      filename,
+    );
+
+    // Manejar respuesta (guardar o eliminar) y retornar metadata del material
+    const materialResponse = await this.handleResponse(response,
+      materialData.subject, {
+        correlationId,
+        filename,
+        blobName,
+        materialData,
+        fileUrl,
+        hash,
+        extension,
+      },
+    );
+
+    return materialResponse;
+  }
+
+  /**
+   * Calcula hash SHA-256 y determina extensión del archivo
+   */
+  private calculateHashAndExtension(pdfBuffer: Buffer, originalName?: string): { hash: string; extension: string } {
+    const hash = createHash('sha256').update(pdfBuffer).digest('hex');
+    const extension = originalName ? path.extname(originalName).replace(/^\./, '').toLowerCase() : 'pdf';
+    this.logger.log(`Hash calculado: ${hash}`);
+    return { hash, extension };
+  }
+
+  /**
+   * Verifica si ya existe un material con el mismo hash (excluyendo materialId si se proporciona)
+   */
+  private async checkDuplicateHash(hash: string, excludeMaterialId?: string): Promise<void> {
+    const where = excludeMaterialId ? { hash, NOT: { id: excludeMaterialId } } : { hash };
+    const existingMaterial = await this.prisma.materiales.findFirst({ where });
+    
     if (existingMaterial) {
       this.logger.warn(`Material duplicado detectado`);
       throw new ConflictException('Material already exists with same content');
-    } 
-    
-    //Subir al blob
+    }
+  }
+
+  /**
+   * Construye la URL completa del blob en Azure Storage
+   */
+  private buildBlobUrl(blobName: string): string {
+    return `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`;
+  }
+
+  /**
+   * Sube blob, envía a IA para análisis y espera respuesta
+   */
+  private async uploadAndAnalyze(
+    pdfBuffer: Buffer,
+    correlationId: string,
+    filename: string,
+  ): Promise<{ blobName: string; fileUrl: string; response: RespuestaIADto }> {
     const blobName = `${correlationId}-${filename}`;
+    
+    // Subir al blob
     let fileUrl: string;
     try {
       fileUrl = await this.uploadToBlob(pdfBuffer, blobName);
@@ -181,31 +168,19 @@ export class MaterialService {
       throw new BadRequestException('Error almacenando PDF');
     }
 
-    //Enviar mensaje a la cola de IA
+    // Enviar mensaje a la cola de IA
     try {
       await this.sendAnalysisMessage(fileUrl, blobName, correlationId, 'analysis');
     } catch (err) {
       this.logger.error('Error enviando mensaje a IA:', err as any);
-      // intentar limpiar blob si el envio falla
       await this.deleteBlobSafe(blobName, correlationId);
       throw new BadRequestException('Error enviando a IA');
     }
 
-    //Esperar respuesta
-    const response: RespuestaIADto = await this.waitForResponse(correlationId);
-
-    //Manejar respuesta (guardar o eliminar) y retornar metadata del material
-    const materialResponse = await this.handleResponse(response, 
-      materialData.subject,{
-      correlationId,
-      filename,
-      blobName,
-      materialData,
-      fileUrl,
-      hash,
-    });
-
-    return materialResponse;
+    // Esperar respuesta
+    const response = await this.waitForResponse(correlationId);
+    
+    return { blobName, fileUrl, response };
   }
 
   /**
@@ -245,15 +220,8 @@ export class MaterialService {
 
   private waitForResponse(correlationId: string): Promise<RespuestaIADto> {
     return new Promise<RespuestaIADto>((resolve, reject) => {
-      // Timeout de 15 segundos
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(correlationId);
-        reject(new BadRequestException('Timeout: No se recibio respuesta de IA en 15 segundos'));
-      }, 15000);
-
       // Resolver con la respuesta de IA y limpiar timeout
       this.pendingRequests.set(correlationId, (response: RespuestaIADto) => {
-        clearTimeout(timeout);
         resolve(response);
       });
     });
@@ -270,6 +238,7 @@ export class MaterialService {
       materialData: CreateMaterialDto;
       fileUrl: string;
       hash: string;
+      extension: string;
     },
   ): Promise<CreateMaterialResponseDto> {
     const { correlationId, filename, blobName, materialData, hash } = ctx;
@@ -281,7 +250,8 @@ export class MaterialService {
             id: correlationId,
             nombre: filename,
             userId: materialData.userId,
-            url: `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`,
+            url: this.buildBlobUrl(blobName),
+            extension: ctx.extension,
             descripcion: materialData.description,
             vistos: 0,
             descargas: 0,
@@ -293,7 +263,7 @@ export class MaterialService {
           subject
         );
         this.sendAnalysisMessage('', blobName, correlationId, 'save');
-        await this.enviarNotificacionNuevoMaterial(response);
+        await this.enviarNotificacion(response, materialData.userId, filename, "nuevoMaterialSubido");
         
         // Retornar respuesta exitosa 201 con formato especificado
         return {
@@ -302,7 +272,7 @@ export class MaterialService {
           description: materialData.description,
           subject: materialData.subject,
           filename,
-          fileUrl: `https://${envs.blobStorageAccountName}.blob.core.windows.net/${this.containerName}/${blobName}`,
+          fileUrl: this.buildBlobUrl(blobName),
           createdAt: new Date(),
         };
       } catch (err) {
@@ -312,7 +282,7 @@ export class MaterialService {
         throw new BadRequestException('Error guardando material válido');
       }
     } else {
-      const reason = response.reason;
+      const reason = response.detalles;
       this.logger.log(
         `Material validado como NO VÁLIDO por IA (correlationId=${correlationId})${
           reason ? ` - motivo: ${reason}` : ''
@@ -385,15 +355,19 @@ export class MaterialService {
   }
 
   /**  * Envía una notificación a los estudiantes sobre un nuevo material subido */
-  async enviarNotificacionNuevoMaterial(response: RespuestaIADto) {
+  async enviarNotificacion(response: RespuestaIADto, userId: string, filename: string, template: string) {
+    const user = await this.prisma.usuarios.findUnique({where: {id: userId}});
+
     const cuerpo : NotificationDto= {
-      rol: 'estudiante',
-      template: 'nuevoMaterialSubido',
+      email: user?.email || 'estudiante',
+      name: user?.nombre || 'Estudiante',
+      template: template,
       resumen: `Se ha subido un nuevo materia de ${response.tema}`,
+      fileName: filename,
       tema: response.tema,
       materia: response.materia,
       guardar: true,
-      mandarCorreo: false,
+      mandarCorreo: true,
     }
 
     const Message : ServiceBusMessage= {
@@ -416,6 +390,7 @@ export class MaterialService {
       include: {
         MaterialTags: { include: { Tags: true } },
         Calificaciones: true,
+        usuarios: { select: { nombre: true } },
       },
     });
 
@@ -493,6 +468,7 @@ export class MaterialService {
       nombre: material.nombre,
       userId: material.userId,
       userName: material.usuarios?.nombre ?? undefined,
+      extension: material.extension,
       url: material.url,
       descripcion: material.descripcion,
       vistos: material.vistos,
@@ -501,10 +477,113 @@ export class MaterialService {
       updatedAt: material.updatedAt,
       tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
       calificacionPromedio: promedio,
+      totalComentarios: material.Calificaciones.length ?? 0,
     };
   }
 
   /**
+   * Registra una calificación para un material y devuelve el promedio actualizado.
+   */
+  async rateMaterial(
+    materialId: string,
+    userId: string,
+    rating: number,
+    comentario?: string | null,
+  ): Promise<RateMaterialResponseDto> {
+    if (rating < 1 || rating > 5) {
+      throw new BadRequestException('La calificación debe estar entre 1 y 5');
+    }
+
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    if (!material) {
+      this.logger.warn(
+        `Intento de calificar material inexistente: ${materialId} (userId=${userId})`,
+      );
+      throw new NotFoundException('Material no encontrado');
+    }
+
+    const usuario = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!usuario) {
+      this.logger.warn(
+        `Intento de calificar por usuario inexistente: ${userId} (materialId=${materialId})`,
+      );
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    await this.prisma.calificaciones.create({
+      data: {
+        idMaterial: materialId,
+        calificacion: rating,
+        comentario: comentario ?? undefined,
+      },
+    });
+
+    const aggregate = await this.prisma.calificaciones.aggregate({
+      where: { idMaterial: materialId },
+      _avg: { calificacion: true },
+      _count: { _all: true },
+    });
+
+    const promedio = aggregate._avg.calificacion ?? 0;
+    const totalCalificaciones = aggregate._count._all;
+
+    const response: RateMaterialResponseDto = {
+      materialId,
+      rating,
+      comentario: comentario ?? null,
+      calificacionPromedio: promedio,
+      totalCalificaciones,
+    };
+
+    return response;
+  }
+
+  /**
+   * Obtiene todas las calificaciones de un material y devuelve el promedio.
+   * 
+   * @param materialId - ID del material
+   * @returns Objeto con lista de calificaciones y el promedio
+   */
+  async getMaterialRatings(
+    materialId: string,
+  ): Promise<GetMaterialRatingsResponseDto> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    if (!material) {
+      this.logger.warn(`Intento de obtener calificaciones de material inexistente: ${materialId}`);
+      throw new NotFoundException('Material no encontrado');
+    }
+
+    const calificaciones = await this.prisma.calificaciones.findMany({
+      where: { idMaterial: materialId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const totalCalificaciones = calificaciones.length;
+    const calificacionPromedio =
+      totalCalificaciones > 0
+        ? calificaciones.reduce((acc: number, c: any) => acc + c.calificacion, 0) / totalCalificaciones
+        : 0;
+
+    return {
+      materialId,
+      calificacionPromedio,
+      totalCalificaciones,
+      calificaciones: calificaciones.map((c: any) => ({
+        id: c.id,
+        calificacion: c.calificacion,
+        comentario: c.comentario ?? null,
+        createdAt: c.createdAt,
+      })),
+    };
+  }
+      
+   /*
    * Obtiene un stream legible del blob del material y realiza las tareas
    * asociadas a la descarga (incremento de contador y evento analytics).
    *
@@ -591,43 +670,101 @@ export class MaterialService {
   }
 
   /**
+   * Busca materiales con filtros avanzados y paginación
+   */
+  async searchMaterials(
+    palabraClave?: string,
+    materia?: string,
+    autor?: string,
+    tipoMaterial?: string,
+    semestre?: number,
+    calificacionMin?: number,
+    page: number = 1,
+    size: number = 10,
+  ): Promise<{ materials: MaterialDto[]; total: number }> {
+    const whereConditions: any = {};
+    const skip = (page - 1) * size;
+
+    // Filtro por palabra clave (busca en nombre y descripción)
+    if (palabraClave) {
+      whereConditions.OR = [
+        { nombre: { contains: palabraClave, mode: 'insensitive' } },
+        { descripcion: { contains: palabraClave, mode: 'insensitive' } },
+      ];
+    }
+
+    // Filtro por autor (userId)
+    if (autor) {
+      whereConditions.userId = autor;
+    }
+
+    // Filtro por tipo de material (asumiendo que está en el nombre del archivo)
+    if (tipoMaterial) {
+      whereConditions.extension = { contains: tipoMaterial, mode: 'insensitive' };
+    }
+
+    // Filtro por semestre (asumiendo que está en los tags o descripción)
+    if (semestre) {
+      whereConditions.descripcion = { contains: semestre.toString(), mode: 'insensitive' };
+    }
+
+    // Obtener materiales con paginación
+    const [materiales, total] = await Promise.all([
+      this.prisma.materiales.findMany({
+        where: whereConditions,
+        include: {
+          MaterialTags: { include: { Tags: true } },
+          Calificaciones: true,
+          usuarios: { select: { nombre: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: size,
+      }),
+      this.prisma.materiales.count({ where: whereConditions }),
+    ]);
+
+    // Filtrar por materia (tags) y calificación mínima
+    let materialesFiltrados = materiales;
+    
+    if (materia) {
+      materialesFiltrados = materialesFiltrados.filter((m: any) =>
+        m.MaterialTags?.some((mt: any) =>
+          mt.Tags?.tag.toLowerCase().includes(materia.toLowerCase()),
+        ),
+      );
+    }
+
+    if (calificacionMin) {
+      materialesFiltrados = materialesFiltrados.filter((m: any) => {
+        if (!m.Calificaciones || m.Calificaciones.length === 0) return false;
+        const promedio = m.Calificaciones.reduce((acc: number, c: any) => acc + c.calificacion, 0) / m.Calificaciones.length;
+        return promedio >= calificacionMin;
+      });
+    }
+
+    return {
+      materials: materialesFiltrados.map((m: any) => this.toMaterialDto(m)),
+      total: materialesFiltrados.length,
+    };
+  }
+  
+  /**
+   * Asegura (idempotente) que la queue `material.analytics` exista en el namespace.
+   * Si no puede crear/consultar la queue, registra la advertencia y no lanza.
    * Obtiene las estadísticas de un material específico
    */
-  async getMaterialStats(materialId: string): Promise<MaterialStatsDto> {
+  async getMaterialStats(materialId: string): Promise<MaterialDto> {
     const material = await this.prisma.materiales.findUnique({
       where: { id: materialId },
       include: {
         MaterialTags: { include: { Tags: true } },
         Calificaciones: true,
+        usuarios: { select: { nombre: true } },
       },
     });
 
-    if (!material) {
-      throw new BadRequestException(`Material con id ${materialId} no encontrado`);
-    }
-
-    const calificacionPromedio =
-      material.Calificaciones && material.Calificaciones.length > 0
-        ? material.Calificaciones.reduce(
-            (acc: number, c: any) => acc + c.calificacion,
-            0,
-          ) / material.Calificaciones.length
-        : undefined;
-
-    const totalComentarios = material.Calificaciones?.filter(
-      (c: any) => c.comentario,
-    ).length ?? 0;
-
-    return {
-      id: material.id,
-      nombre: material.nombre,
-      descargas: material.descargas,
-      vistos: material.vistos,
-      calificacionPromedio,
-      totalComentarios,
-      createdAt: material.createdAt,
-      tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
-    };
+    return this.toMaterialDto(material);
   }
 
   /**
@@ -693,4 +830,294 @@ export class MaterialService {
       data: { descargas: { increment: 1 } },
     });
   }
+
+  /**
+   *
+   * Entrada:
+   * - query (palabraClave): texto ingresado por el usuario
+   * - materia: filtro opcional 
+   * - autor: filtro opcional 
+   *
+   * Salida:
+   * - listaResultados: lista de máx. 5 materiales con título, autor, materia, calificación, descargas
+   * - contadorResultados: número total de coincidencias 
+   *
+   */
+  async autocompleteMaterials(
+    palabraClave: string,
+    materia?: string,
+    autor?: string,   
+  ): Promise<AutocompleteResponseDto> {
+    const term = palabraClave?.trim();
+
+    if (!term || term.length < 1) {
+      throw new BadRequestException(
+        'La palabra clave debe tener al menos 1 carácter',
+      );
+    }
+
+    const whereBase: any = {
+      OR: [
+        { nombre: { contains: term, mode: 'insensitive' } },
+        { descripcion: { contains: term, mode: 'insensitive' } },
+      ],
+    };
+
+    if (autor) {
+      whereBase.usuarios = {
+        OR: [
+          { nombre: { contains: autor, mode: 'insensitive' } },
+          { apellido: { contains: autor, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const contadorResultados = await this.prisma.materiales.count({
+      where: whereBase,
+    });
+
+    if (contadorResultados === 0) {
+      return {
+        listaResultados: [],
+        contadorResultados: 0,
+      };
+    }
+
+    const select = {
+      id: true,
+      nombre: true,
+      descripcion: true,
+      descargas: true,
+      usuarios: {
+        select: { nombre: true, apellido: true },
+      },
+    };
+
+    const sugerencias: any[] = [];
+    const seen = new Set<string>();
+
+    const addUnique = (arr: any[]) => {
+      for (const item of arr) {
+        if (sugerencias.length >= 5) break;
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        sugerencias.push(item);
+      }
+    };
+
+    const inicio = await this.prisma.materiales.findMany({
+      where: {
+        AND: [
+          whereBase,
+          {
+            nombre: { startsWith: term, mode: 'insensitive' },
+          },
+        ],
+      },
+      select,
+      take: 5,
+    });
+    addUnique(inicio);
+
+    if (sugerencias.length < 5) {
+      const contieneTitulo = await this.prisma.materiales.findMany({
+        where: {
+          AND: [
+            whereBase,
+            {
+              nombre: {
+                contains: term,
+                mode: 'insensitive',
+              },
+            },
+            {
+              NOT: {
+                nombre: {
+                  startsWith: term,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          ],
+        },
+        select,
+        take: 5,
+      });
+      addUnique(contieneTitulo);
+    }
+
+    if (sugerencias.length < 5) {
+      const descripcionMatches = await this.prisma.materiales.findMany({
+        where: {
+          AND: [
+            whereBase,
+            {
+              descripcion: {
+                contains: term,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        },
+        select,
+        take: 5,
+      });
+      addUnique(descripcionMatches);
+    }
+
+    const listaResultados: AutocompleteResponseDto['listaResultados'] = [];
+
+
+    for (const mat of sugerencias) {
+      const promedioAgg = await this.prisma.calificaciones.aggregate({
+        where: { idMaterial: mat.id },
+        _avg: { calificacion: true },
+      });
+
+      const autorNombre = mat.usuarios
+        ? `${mat.usuarios.nombre} ${mat.usuarios.apellido}`.trim()
+        : null;
+
+      listaResultados.push({
+        id: mat.id,
+        titulo: mat.nombre,
+        autor: autorNombre,
+        materia: null, 
+        calificacionPromedio: promedioAgg._avg.calificacion ?? null,
+        descargas: mat.descargas,
+      });
+    }
+
+    return {
+      listaResultados,
+      contadorResultados,
+    };
+  }
+
+  /**
+ * Actualiza la versión de un material existente:
+ * - Reemplaza el archivo PDF en Blob Storage
+ * - Actualiza metadata (título, descripción, url, extensión, hash, updatedAt)
+ * - Regenera tags (tags IA + subject)
+ */
+async updateMaterialVersion(
+  materialId: string,
+  pdfBuffer: Buffer,
+  materialData: CreateMaterialDto,
+  originalName?: string,
+): Promise<CreateMaterialResponseDto> {
+  // Verificar que el material existe
+  const existing = await this.prisma.materiales.findUnique({
+    where: { id: materialId },
+  });
+
+  if (!existing) {
+    this.logger.warn(`Intento de actualizar material inexistente: ${materialId}`);
+    throw new NotFoundException('Material no encontrado');
+  }
+
+  // Verificar que el usuario existe
+  await this.validateUserExists(materialData.userId);
+
+  const correlationId = uuid();
+  const filename = materialData.title;
+  const { hash, extension } = this.calculateHashAndExtension(pdfBuffer, originalName);
+
+  // Verificar hash duplicado (excluyendo el material actual)
+  await this.checkDuplicateHash(hash, materialId);
+
+  // Subir blob y obtener respuesta de IA
+  const { blobName, response } = await this.uploadAndAnalyze(
+    pdfBuffer,
+    correlationId,
+    filename,
+  );
+
+  // Validar respuesta de IA
+  if (!response.valid) {
+    const reason = response.detalles;
+    this.logger.log(
+      `Material actualizado marcado como NO VÁLIDO por IA (correlationId=${correlationId})` +
+        (reason ? ` - motivo: ${reason}` : ''),
+    );
+    await this.deleteBlobSafe(blobName, correlationId);
+    const message = reason
+      ? `PDF falló la validación automatizada: ${reason}`
+      : 'PDF falló la validación automatizada';
+    throw new UnprocessableEntityException(message);
+  }
+
+  this.logger.log(
+    `Material validado como VÁLIDO por IA en actualización (correlationId=${correlationId})`,
+  );
+
+  const newFileUrl = this.buildBlobUrl(blobName);
+
+  // Eliminar tags anteriores y guardar nuevos
+  await this.prisma.materialTags.deleteMany({
+    where: { idMaterial: materialId },
+  });
+  await this.guardarTags(response.tags, materialId, materialData.subject);
+
+  // Actualizar material en BD
+  const updated = await this.prisma.materiales.update({
+    where: { id: materialId },
+    data: {
+      nombre: filename,
+      descripcion: materialData.description,
+      url: newFileUrl,
+      extension,          
+      hash,
+      updatedAt: new Date(),
+    },
+  });
+
+  await this.sendAnalysisMessage('', blobName, correlationId, 'save');
+
+  // Eliminar blob anterior
+  await this.deleteOldBlob(existing.url, materialId);
+
+  return {
+    id: updated.id,
+    title: materialData.title,
+    description: materialData.description,
+    subject: materialData.subject,
+    filename,
+    fileUrl: newFileUrl,
+    createdAt: existing.createdAt, 
+  };
+}
+
+/**
+ * Valida que un usuario existe en la base de datos
+ */
+private async validateUserExists(userId: string): Promise<void> {
+  const userExists = await this.prisma.usuarios.findUnique({
+    where: { id: userId },
+  });
+  if (!userExists) {
+    throw new BadRequestException(
+      `El userId ${userId} no existe en la base de datos`,
+    );
+  }
+}
+
+/**
+ * Elimina el blob anterior de un material de forma segura
+ */
+private async deleteOldBlob(oldUrl: string | null, materialId: string): Promise<void> {
+  try {
+    if (oldUrl) {
+      const url = new URL(oldUrl);
+      const parts = url.pathname.split('/');
+      const oldBlobName = decodeURIComponent(parts.slice(2).join('/'));
+      await this.deleteBlobSafe(oldBlobName, materialId);
+    }
+  } catch (err) {
+    this.logger.warn(
+      `No se pudo eliminar el blob anterior para material ${materialId}: ${(err as Error).message}`,
+    );
+  }
+}
+
 }
