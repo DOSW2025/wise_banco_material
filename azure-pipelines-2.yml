@@ -1,0 +1,40 @@
+# Node.js
+# Build a general Node.js project with npm.
+
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest # <--- Asegúrate de usar 2 espacios aquí
+
+steps:
+# Tarea 1: Instalar Node.js
+- task: NodeTool@0 # <--- Un solo espacio antes del '-'
+  inputs: # <--- 2 espacios antes de 'inputs'
+    versionSpec: '20.x' # <--- 4 espacios (2 de 'inputs' + 2)
+  displayName: 'Install Node.js' # <--- 2 espacios antes de 'displayName'
+
+# Tarea 2: Install y Build
+- script: | # <--- Un solo espacio antes del '-'
+    npm install
+    npm run build
+  displayName: 'npm install and build' # <--- 2 espacios antes de 'displayName'
+
+
+# TAREAS AGREGADAS PARA PUBLICACIÓN DEL ARTEFACTO
+
+# Tarea 3: Copiar archivos
+- task: CopyFiles@2 # <--- Un solo espacio antes del '-'
+  displayName: 'Copiar Archivos de Compilación a Staging'
+  inputs: # <--- 2 espacios antes de 'inputs'
+    # Usamos 'dist/**' porque NestJS usa la carpeta 'dist' por defecto
+    Contents: 'dist/**' # <--- 4 espacios
+    TargetFolder: '$(Build.ArtifactStagingDirectory)' # <--- 4 espacios
+
+# Tarea 4: Publicar artefacto
+- task: PublishBuildArtifacts@1 # <--- Un solo espacio antes del '-'
+  displayName: 'Publicar Artefacto Versionado'
+  inputs: # <--- 2 espacios antes de 'inputs'
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)' # <--- 4 espacios
+    ArtifactName: 'BancoMateriales' # <--- 4 espacios
+    publishLocation: 'Container' # <--- 4 espacios
