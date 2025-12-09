@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { PassThrough } from 'stream';
 import { readFileSync, existsSync } from 'fs';
-import * as Handlebars from 'handlebars';
 import * as path from 'path';
+import * as Handlebars from 'handlebars';
 import puppeteer from 'puppeteer';
 import { MaterialDto } from '../material/dto/material.dto';
 
@@ -12,41 +13,51 @@ export class PdfExportService {
   constructor() {}
 
   /**
-   * Genera PDF cargando un template HTML
+   * Resuelve ruta de template soportando dev (src/) y build (dist/).
    */
-  async generateMaterialStatsPDF(stats: MaterialDto): Promise<Buffer> {
-    this.logger.log(`Generando PDF industrial para material ${stats.id}`);
-
-    // Cargar template: buscar en varios lugares para soportar dev (src/) y build (dist/)
+  private resolveTemplatePath(): string {
     const candidates = [
       path.join(__dirname, 'templates', 'material-report.hbs'),
       path.join(process.cwd(), 'src', 'pdf-export', 'templates', 'material-report.hbs'),
-      path.join(process.cwd(), 'templates', 'material-report.hbs'),
+      path.join(process.cwd(), 'dist', 'src', 'pdf-export', 'templates', 'material-report.hbs'),
     ];
 
-    const templatePath = candidates.find((p) => existsSync(p));
-    if (!templatePath) {
-      this.logger.error(
-        `Template 'material-stats-template.html' not found. Tried: ${candidates.join(', ')}`,
-      );
-      throw new Error(
-        `Template 'material-stats-template.html' not found. Please place it under 'src/pdf-export/templates' or 'dist/src/pdf-export/templates' depending on runtime.`,
-      );
+    const found = candidates.find((p) => existsSync(p));
+    if (!found) {
+      this.logger.error(`Template 'material-report.hbs' no encontrado. Tried: ${candidates.join(', ')}`);
+      throw new Error('Template material-report.hbs no encontrado');
     }
+    return found;
+  }
 
+  /**
+   * Genera PDF a partir del template Handlebars y devuelve un stream para pipear.
+   */
+  async generateMaterialStatsPDF(
+    stats: MaterialDto,
+  ): Promise<{ stream: PassThrough; filename: string; contentType: string }> {
+    this.logger.log(`Generando PDF industrial para material ${stats.id}`);
+
+    const templatePath = this.resolveTemplatePath();
     const htmlTemplate = readFileSync(templatePath, 'utf8');
     const compiled = Handlebars.compile(htmlTemplate);
-    
+
     const html = compiled({
       ...stats,
-      createdAt: new Date(stats.createdAt).toLocaleDateString('es-CO'),
-      updatedAt: new Date(stats.updatedAt).toLocaleDateString('es-CO'),
+      createdAt: stats.createdAt ? new Date(stats.createdAt).toLocaleString('es-CO') : 'N/D',
+      updatedAt: stats.updatedAt ? new Date(stats.updatedAt).toLocaleString('es-CO') : 'N/D',
       year: new Date().getFullYear(),
     });
 
-    // Renderizar con Puppeteer
+    const executablePath = puppeteer.executablePath();
+    if (!executablePath || !existsSync(executablePath)) {
+      this.logger.error('Chromium no encontrado. Asegúrate de ejecutar "npx puppeteer browsers install chrome" durante el build/postinstall.');
+      throw new Error('Chromium no encontrado para generar PDFs');
+    }
+
     const browser = await puppeteer.launch({
       headless: true,
+      executablePath,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
@@ -56,17 +67,18 @@ export class PdfExportService {
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      margin: {
-        top: '40px',
-        bottom: '40px',
-        left: '30px',
-        right: '30px',
-      },
+      margin: { top: '40px', bottom: '40px', left: '30px', right: '30px' },
     });
 
     await browser.close();
 
-    // Ensure we return a Node Buffer (page.pdf may return a Uint8Array)
-    return Buffer.from(pdfBuffer);
+    const stream = new PassThrough();
+    stream.end(pdfBuffer);
+
+    return {
+      stream,
+      filename: `material-stats-${stats.id}.pdf`,
+      contentType: 'application/pdf',
+    };
   }
 }
