@@ -20,14 +20,25 @@ export class PdfExportController {
     this.logger.log(`Exportando PDF industrial para material ${id}`);
 
     const stats = await this.materialService.getMaterialStats(id);
-    
-    const pdf = await this.pdfExportService.generateMaterialStatsPDF(stats);
 
-    res.setHeader('Content-Type', 'application/pdf');
+    const { stream, filename, contentType } =
+      await this.pdfExportService.generateMaterialStatsPDF(stats);
+
+    res.setHeader('Content-Type', contentType);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="material-stats-${stats.id}.pdf"`,
+      `attachment; filename="${filename.replace(/"/g, '')}"`,
     );
-    res.end(pdf);
+
+    stream.on('error', (err) => {
+      this.logger.error(`Error generando PDF para ${id}: ${err?.message ?? err}`);
+      if (!res.headersSent) {
+        res.status(500).send('Error generando el PDF');
+      } else {
+        res.end();
+      }
+    });
+
+    stream.pipe(res);
   }
 }
