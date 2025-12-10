@@ -66,11 +66,12 @@ jobs:
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'AuthService'
+          app-name: 'eciwise-bancoMaterial'
           slot-name: 'Production'
           package: .
         env:
           SCM_DO_BUILD_DURING_DEPLOYMENT: true
           WEBSITE_NODE_DEFAULT_VERSION: '24.x'
+
 
           
