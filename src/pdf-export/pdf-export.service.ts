@@ -2,8 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PassThrough } from 'stream';
 import { readFileSync, existsSync } from 'fs';
 import * as path from 'path';
-import * as Handlebars from 'handlebars';
-import puppeteer from 'puppeteer';
+import PDFDocument from 'pdfkit';
 import { MaterialDto } from '../material/dto/material.dto';
 
 @Injectable()
@@ -21,7 +20,6 @@ export class PdfExportService {
       path.join(process.cwd(), 'src', 'pdf-export', 'templates', 'material-report.hbs'),
       path.join(process.cwd(), 'dist', 'src', 'pdf-export', 'templates', 'material-report.hbs'),
     ];
-
     const found = candidates.find((p) => existsSync(p));
     if (!found) {
       this.logger.error(`Template 'material-report.hbs' no encontrado. Tried: ${candidates.join(', ')}`);
@@ -36,44 +34,69 @@ export class PdfExportService {
   async generateMaterialStatsPDF(
     stats: MaterialDto,
   ): Promise<{ stream: PassThrough; filename: string; contentType: string }> {
-    this.logger.log(`Generando PDF industrial para material ${stats.id}`);
 
+    // Validar que el template existe (se mantiene referencia solicitada)
     const templatePath = this.resolveTemplatePath();
-    const htmlTemplate = readFileSync(templatePath, 'utf8');
-    const compiled = Handlebars.compile(htmlTemplate);
+    readFileSync(templatePath, 'utf8');
 
-    const html = compiled({
-      ...stats,
-      createdAt: stats.createdAt ? new Date(stats.createdAt).toLocaleString('es-CO') : 'N/D',
-      updatedAt: stats.updatedAt ? new Date(stats.updatedAt).toLocaleString('es-CO') : 'N/D',
-      year: new Date().getFullYear(),
+    const doc = new PDFDocument({ margin: 40 });
+    const stream = new PassThrough();
+    doc.pipe(stream);
+
+    const formatDate = (date?: Date) =>
+      date ? new Date(date).toLocaleString('es-CO') : 'N/D';
+
+    const addSectionTitle = (title: string) => {
+      doc.moveDown(0.8);
+      doc.fontSize(16).fillColor('#003366').text(title, { underline: true });
+      doc.moveDown(0.3);
+    };
+
+    const addKeyValue = (label: string, value: string | number | null | undefined) => {
+      doc.fontSize(11).fillColor('#000000').text(`${label}: `, { continued: true });
+      doc.fillColor('#333333').text(`${value ?? 'N/D'}`);
+    };
+
+    // Header
+    doc.fontSize(20).fillColor('#003366').text('Reporte de Material', { align: 'center' });
+    doc.fontSize(12).fillColor('#555555').text('Informe generado automáticamente por ECIWISE+', {
+      align: 'center',
     });
+    doc.moveDown();
 
-    const executablePath = puppeteer.executablePath();
-    if (!executablePath || !existsSync(executablePath)) {
-      this.logger.error('Chromium no encontrado. Asegúrate de ejecutar "npx puppeteer browsers install chrome" durante el build/postinstall.');
-      throw new Error('Chromium no encontrado para generar PDFs');
+    // Información general
+    addSectionTitle('Información General');
+    addKeyValue('ID', stats.id);
+    addKeyValue('Nombre', stats.nombre);
+    addKeyValue('Estudiante', stats.userName);
+    addKeyValue('Descripción', stats.descripcion || 'N/D');
+    addKeyValue('URL', stats.url);
+    addKeyValue('Creado', formatDate(stats.createdAt));
+    addKeyValue('Última actualización', formatDate(stats.updatedAt));
+
+    // Estadísticas
+    addSectionTitle('Estadísticas del Material');
+    addKeyValue('Vistas', stats.vistos ?? 0);
+    addKeyValue('Descargas', stats.descargas ?? 0);
+    addKeyValue('Calificación Promedio', stats.calificacionPromedio ?? 0);
+    addKeyValue('Total Comentarios', stats.totalComentarios ?? 0);
+
+    // Etiquetas
+    addSectionTitle('Etiquetas');
+    if (stats.tags && stats.tags.length > 0) {
+      stats.tags.forEach((tag) => doc.fontSize(11).fillColor('#003366').text(`• ${tag}`));
+    } else {
+      doc.fontSize(11).fillColor('#777777').text('No hay etiquetas asociadas');
     }
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      executablePath,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    // Footer
+    doc.moveDown();
+    doc.fontSize(10).fillColor('#777777').text(
+      `ECIWISE+ — Plataforma de Aprendizaje Colaborativo — ${new Date().getFullYear()}`,
+      { align: 'center' },
+    );
 
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '40px', bottom: '40px', left: '30px', right: '30px' },
-    });
-
-    await browser.close();
-
-    const stream = new PassThrough();
-    stream.end(pdfBuffer);
+    doc.end();
 
     return {
       stream,
