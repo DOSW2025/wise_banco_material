@@ -8,7 +8,9 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "postinstall": "echo '[POSTINSTALL] Generating Prisma Client...' && node node_modules/prisma/build/index.js generate && npx puppeteer browsers install chrome && echo '✅ Chromium installed'",
+    "postinstall": "echo '[POSTINSTALL] Generating Prisma Client...' && node node_modules/prisma/build/index.js generate",
+    "install:chromium": "npx puppeteer browsers install chrome || echo 'Chromium installation failed, will use system chromium'",
+    "azure:postbuild": "node node_modules/prisma/build/index.js generate && npm run install:chromium",
     "start": "echo '[START] Generating Prisma Client...' && node node_modules/prisma/build/index.js generate && echo '🔄 [START] Running Prisma migrations...' && node node_modules/prisma/build/index.js migrate deploy && echo '🚀 [START] Starting application...' && node dist/src/main",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
