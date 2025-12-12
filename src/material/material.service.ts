@@ -451,6 +451,26 @@ export class MaterialService {
   }
 
   /**
+   * Obtiene todos los materiales del sistema con paginación opcional.
+   */
+  async getAllMaterials(skip?: number, take?: number): Promise<MaterialDto[]> {
+    const materiales = await this.prisma.materiales.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
+      skip: skip ? Number(skip) : undefined,
+      take: take ? Number(take) : undefined,
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+        usuarios: { select: { nombre: true } },
+      },
+    });
+
+    return materiales.map((m: any) => this.toMaterialDto(m));
+  }
+
+  /**
    * Mapea el modelo de Prisma al DTO de salida para listas.
    */
   private toMaterialDto(material: any): MaterialDto {
