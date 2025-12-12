@@ -816,7 +816,7 @@ export class MaterialService {
             0,
           ) / material.Calificaciones.length
         : null;
-
+    await this.incrementViews(materialId);
     return {
       metadata: {
         id: material.id,
