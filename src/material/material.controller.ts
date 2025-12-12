@@ -211,6 +211,47 @@ export class MaterialController {
   ): Promise<MaterialDto[]> {
     return this.materialService.getPopularMaterials(limit);
   }
+
+  /**
+   * Endpoint para obtener todos los materiales del sistema con paginación opcional.
+   */
+  @Get()
+  @ApiOperation({
+    summary: 'Obtener todos los materiales',
+    description:
+      'Devuelve la lista completa de todos los materiales del sistema con soporte para paginación mediante parámetros skip y take.',
+  })
+  @ApiQuery({
+    name: 'skip',
+    required: false,
+    type: Number,
+    description: 'Número de registros a saltar (para paginación)',
+    example: 0,
+  })
+  @ApiQuery({
+    name: 'take',
+    required: false,
+    type: Number,
+    description: 'Número de registros a obtener (para paginación)',
+    example: 10,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de todos los materiales ordenados por fecha de creación (más recientes primero).',
+    type: MaterialDto,
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
+  async getAllMaterials(
+    @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,
+    @Query('take', new DefaultValuePipe(10), ParseIntPipe) take: number,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.getAllMaterials(skip, take);
+  }
+
   /**
    * POST /api/material/:id/ratings
    *
