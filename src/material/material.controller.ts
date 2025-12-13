@@ -220,6 +220,74 @@ export class MaterialController {
   }
 
   /**
+   * Endpoint para obtener los top 3 materiales más descargados de un usuario.
+   *
+   * Retorna:
+   * - Los 3 materiales con más descargas del usuario
+   * - Información completa de cada material (metadata, tags, calificación)
+   */
+  @Get('user/:userId/top-downloaded')
+  @ApiOperation({
+    summary: 'Obtener top 3 materiales más descargados de un usuario',
+    description:
+      'Retorna los 3 materiales con más descargas del usuario especificado.',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Top 3 materiales más descargados.',
+    type: MaterialDto,
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getTopDownloadedMaterials(
+    @Param('userId') userId: string,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.getTopDownloadedMaterials(userId);
+  }
+
+  /**
+   * Endpoint para obtener los top 3 materiales más vistos de un usuario.
+   *
+   * Retorna:
+   * - Los 3 materiales con más vistas del usuario
+   * - Información completa de cada material (metadata, tags, calificación)
+   */
+  @Get('user/:userId/top-viewed')
+  @ApiOperation({
+    summary: 'Obtener top 3 materiales más vistos de un usuario',
+    description:
+      'Retorna los 3 materiales con más vistas del usuario especificado.',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Top 3 materiales más vistos.',
+    type: MaterialDto,
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getTopViewedMaterials(
+    @Param('userId') userId: string,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.getTopViewedMaterials(userId);
+  }
+
+  /**
    * Endpoint para obtener los materiales más populares del sistema.
    *
    * La popularidad se mide según vistas/descargas (la lógica exacta está en el servicio).

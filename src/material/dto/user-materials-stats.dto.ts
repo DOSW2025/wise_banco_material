@@ -17,10 +17,10 @@ export class UserMaterialsStatsDto {
   calificacionPromedio: number;
 
   @ApiProperty({
-    description: 'Total de calificaciones registradas en todos los materiales del usuario',
-    example: 15,
+    description: 'Total de materiales del usuario',
+    example: 8,
   })
-  totalCalificaciones: number;
+  totalMateriales: number;
 
   @ApiProperty({
     description: 'Total de descargas de todos los materiales del usuario',

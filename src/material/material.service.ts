@@ -462,7 +462,7 @@ export class MaterialService {
   /**
    * Obtiene las estadísticas agregadas de todos los materiales de un usuario
    * @param userId - ID del usuario
-   * @returns Objeto con estadísticas: calificacionPromedio, totalCalificaciones, totalDescargas, totalVistas
+   * @returns Objeto con estadísticas: calificacionPromedio, totalMateriales, totalDescargas, totalVistas
    */
   async getUserMaterialsStats(userId: string): Promise<UserMaterialsStatsDto> {
     // Validar que el usuario existe
@@ -480,6 +480,8 @@ export class MaterialService {
     });
 
     // Calcular estadísticas
+    const totalMateriales = materiales.length;
+
     const totalDescargas = materiales.reduce(
       (acc: number, m: any) => acc + (m.descargas ?? 0),
       0,
@@ -495,22 +497,77 @@ export class MaterialService {
       (m: any) => m.Calificaciones ?? [],
     );
 
-    const totalCalificaciones = todasLasCalificaciones.length;
     const calificacionPromedio =
-      totalCalificaciones > 0
+      todasLasCalificaciones.length > 0
         ? todasLasCalificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / totalCalificaciones
+          ) / todasLasCalificaciones.length
         : 0;
 
     return {
       userId,
       calificacionPromedio,
-      totalCalificaciones,
+      totalMateriales,
       totalDescargas,
       totalVistas,
     };
+  }
+
+  /**
+   * Obtiene los top 3 materiales más descargados de un usuario
+   * @param userId - ID del usuario
+   * @returns Array de materiales ordenados por descargas descendentes
+   */
+  async getTopDownloadedMaterials(userId: string): Promise<MaterialDto[]> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      orderBy: { descargas: 'desc' },
+      take: 3,
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+        usuarios: { select: { nombre: true } },
+      },
+    });
+
+    return materiales.map((m: any) => this.toMaterialDto(m));
+  }
+
+  /**
+   * Obtiene los top 3 materiales más vistos de un usuario
+   * @param userId - ID del usuario
+   * @returns Array de materiales ordenados por vistas descendentes
+   */
+  async getTopViewedMaterials(userId: string): Promise<MaterialDto[]> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      orderBy: { vistos: 'desc' },
+      take: 3,
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+        usuarios: { select: { nombre: true } },
+      },
+    });
+
+    return materiales.map((m: any) => this.toMaterialDto(m));
   }
 
   /**
