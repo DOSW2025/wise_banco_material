@@ -48,9 +48,14 @@ export class GetMaterialRatingsResponseDto {
   totalCalificaciones: number;
 
   @ApiProperty({
-    description: 'Lista de todas las calificaciones del material',
-    type: MaterialRatingDto,
-    isArray: true,
+    description: 'Total de descargas del material',
+    example: 42,
   })
-  calificaciones: MaterialRatingDto[];
+  totalDescargas: number;
+
+  @ApiProperty({
+    description: 'Total de vistas del material',
+    example: 156,
+  })
+  totalVistas: number;
 }
