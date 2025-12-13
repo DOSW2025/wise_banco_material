@@ -1140,4 +1140,12 @@ private async deleteOldBlob(oldUrl: string | null, materialId: string): Promise<
   }
 }
 
+/**
+ * Obtiene la cantidad total de materiales en el sistema
+ */
+async getMaterialsCount(): Promise<{ Count: number }> {
+  const count = await this.prisma.materiales.count();
+  return { Count: count };
+}
+
 }
