@@ -16,6 +16,7 @@ import { SearchMaterialsDto } from './dto/search-materials.dto';
 import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
+import { MaterialsCountDto } from './dto/materials-count.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -210,6 +211,31 @@ export class MaterialController {
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
   ): Promise<MaterialDto[]> {
     return this.materialService.getPopularMaterials(limit);
+  }
+
+  /**
+   * Endpoint para obtener la cantidad total de materiales.
+   *
+   * Retorna:
+   * - Count: cantidad total de materiales en el sistema
+   */
+  @Get('stats/count')
+  @ApiOperation({
+    summary: 'Obtener cantidad total de materiales',
+    description:
+      'Devuelve la cantidad total de materiales registrados en el sistema.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Cantidad total de materiales.',
+    type: MaterialsCountDto,
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
+  async getMaterialsCount(): Promise<MaterialsCountDto> {
+    return this.materialService.getMaterialsCount();
   }
 
   /**
