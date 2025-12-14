@@ -1,4 +1,4 @@
-import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,Put,Delete} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,Put,Delete,DefaultValuePipe, ParseIntPipe} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,7 +9,6 @@ import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { MaterialDetailDto } from './dto/material-detail.dto';
-import { DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import { CreateRatingDto } from './dto/create-rating.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { SearchMaterialsDto } from './dto/search-materials.dto';
@@ -824,8 +823,9 @@ async actualizarMaterialVersion(
     this.validatePdfFile(file);
   }
 
+  const fileInfo = file ? ` con archivo '${file.originalname}'` : ' sin cambiar archivo';
   this.logger.log(
-    `Actualizando material ${materialId}${file ? ` con archivo '${file.originalname}'` : ' sin cambiar archivo'}`,
+    `Actualizando material ${materialId}${fileInfo}`,
   );
 
   return this.materialService.updateMaterialVersion(

@@ -17,7 +17,7 @@ import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 import { GetMaterialRatingsResponseDto, MaterialRatingDto } from './dto/get-material-ratings.dto';
 import { UserMaterialsStatsDto } from './dto/user-materials-stats.dto';
-import { TopDownloadedMaterialsDto, TopViewedMaterialsDto, MaterialRankingDto } from './dto/top-materials.dto';
+import { TopDownloadedMaterialsDto, TopViewedMaterialsDto } from './dto/top-materials.dto';
 import { UserTagsPercentageDto } from './dto/user-tags-percentage.dto';
 
 @Injectable()
