@@ -18,6 +18,8 @@ import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 import { MaterialsCountDto } from './dto/materials-count.dto';
 import { UserMaterialsStatsDto } from './dto/user-materials-stats.dto';
+import { TopDownloadedMaterialsDto, TopViewedMaterialsDto } from './dto/top-materials.dto';
+import { UserTagsPercentageDto } from './dto/user-tags-percentage.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -220,17 +222,18 @@ export class MaterialController {
   }
 
   /**
-   * Endpoint para obtener los top 3 materiales más descargados de un usuario.
+   * Endpoint para obtener el top 3 de materiales más descargados de un usuario.
    *
    * Retorna:
-   * - Los 3 materiales con más descargas del usuario
-   * - Información completa de cada material (metadata, tags, calificación)
+   * - ID del usuario
+   * - Array con los 3 materiales más descargados (id, nombre, descargas, vistos)
+   * - Si no hay materiales, devuelve array vacío
    */
   @Get('user/:userId/top-downloaded')
   @ApiOperation({
-    summary: 'Obtener top 3 materiales más descargados de un usuario',
+    summary: 'Obtener top 3 materiales más descargados del usuario',
     description:
-      'Retorna los 3 materiales con más descargas del usuario especificado.',
+      'Retorna los 3 materiales más descargados de un usuario específico, ordenados por número de descargas descendente.',
   })
   @ApiParam({
     name: 'userId',
@@ -240,8 +243,7 @@ export class MaterialController {
   @ApiResponse({
     status: 200,
     description: 'Top 3 materiales más descargados.',
-    type: MaterialDto,
-    isArray: true,
+    type: TopDownloadedMaterialsDto,
   })
   @ApiResponse({
     status: 404,
@@ -249,22 +251,23 @@ export class MaterialController {
   })
   async getTopDownloadedMaterials(
     @Param('userId') userId: string,
-  ): Promise<MaterialDto[]> {
+  ): Promise<TopDownloadedMaterialsDto> {
     return this.materialService.getTopDownloadedMaterials(userId);
   }
 
   /**
-   * Endpoint para obtener los top 3 materiales más vistos de un usuario.
+   * Endpoint para obtener el top 3 de materiales más vistos de un usuario.
    *
    * Retorna:
-   * - Los 3 materiales con más vistas del usuario
-   * - Información completa de cada material (metadata, tags, calificación)
+   * - ID del usuario
+   * - Array con los 3 materiales más vistos (id, nombre, descargas, vistos)
+   * - Si no hay materiales, devuelve array vacío
    */
   @Get('user/:userId/top-viewed')
   @ApiOperation({
-    summary: 'Obtener top 3 materiales más vistos de un usuario',
+    summary: 'Obtener top 3 materiales más vistos del usuario',
     description:
-      'Retorna los 3 materiales con más vistas del usuario especificado.',
+      'Retorna los 3 materiales más vistos de un usuario específico, ordenados por número de vistas descendente.',
   })
   @ApiParam({
     name: 'userId',
@@ -274,8 +277,7 @@ export class MaterialController {
   @ApiResponse({
     status: 200,
     description: 'Top 3 materiales más vistos.',
-    type: MaterialDto,
-    isArray: true,
+    type: TopViewedMaterialsDto,
   })
   @ApiResponse({
     status: 404,
@@ -283,8 +285,42 @@ export class MaterialController {
   })
   async getTopViewedMaterials(
     @Param('userId') userId: string,
-  ): Promise<MaterialDto[]> {
+  ): Promise<TopViewedMaterialsDto> {
     return this.materialService.getTopViewedMaterials(userId);
+  }
+
+  /**
+   * Endpoint para obtener los tags utilizados por un usuario y su porcentaje de uso.
+   *
+   * Retorna:
+   * - ID del usuario
+   * - Array de tags con sus porcentajes (suma total = 100%)
+   * - Ordenados por porcentaje descendente
+   */
+  @Get('user/:userId/tags-percentage')
+  @ApiOperation({
+    summary: 'Obtener tags y porcentajes de un usuario',
+    description:
+      'Retorna todos los tags utilizados en los materiales de un usuario con su porcentaje de uso respecto al total (suma = 100%).',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Tags con porcentajes del usuario.',
+    type: UserTagsPercentageDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getUserTagsPercentage(
+    @Param('userId') userId: string,
+  ): Promise<UserTagsPercentageDto> {
+    return this.materialService.getUserTagsPercentage(userId);
   }
 
   /**
@@ -343,6 +379,56 @@ export class MaterialController {
   })
   async getMaterialsCount(): Promise<MaterialsCountDto> {
     return this.materialService.getMaterialsCount();
+  }
+
+  /**
+   * Endpoint para buscar materiales por nombre (búsqueda parcial).
+   * Devuelve materiales cuyo nombre coincida (parcialmente) con la búsqueda.
+   */
+  @Get('search')
+  @ApiOperation({
+    summary: 'Buscar materiales por nombre',
+    description: 'Busca materiales cuyo nombre contenga el término especificado (búsqueda parcial, insensible a mayúsculas/minúsculas).',
+  })
+  @ApiQuery({
+    name: 'nombre',
+    required: true,
+    description: 'Término de búsqueda para el nombre del material',
+  })
+  @ApiQuery({
+    name: 'skip',
+    required: false,
+    type: Number,
+    description: 'Número de registros a saltar (para paginación)',
+    example: 0,
+  })
+  @ApiQuery({
+    name: 'take',
+    required: false,
+    type: Number,
+    description: 'Número de registros a obtener (para paginación)',
+    example: 10,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de materiales que coinciden con la búsqueda.',
+    type: MaterialDto,
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'El parámetro de búsqueda es inválido o vacío.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
+  async searchMaterialsByName(
+    @Query('nombre') nombre: string,
+    @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,
+    @Query('take', new DefaultValuePipe(10), ParseIntPipe) take: number,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.searchMaterialsByName(nombre, skip, take);
   }
 
   /**
@@ -659,47 +745,6 @@ export class MaterialController {
   * Busca coincidencias en título, descripción y autor,
   * retornando un máximo de 5 sugerencias ordenadas por relevancia.
   */
-  @Get('autocomplete')
-  @ApiOperation({
-    summary: 'Autocompletado de búsqueda de materiales',
-    description:
-      'Busca en título, descripción y autor. Retorna hasta 5 sugerencias ordenadas por relevancia.',
-  })
-  @ApiQuery({
-    name: 'query',
-    required: true,
-    description: 'Cadena ingresada por el usuario',
-  })
-  @ApiQuery({
-    name: 'materia',
-    required: false,
-    description: 'Materia — no disponible actualmente',
-  })
-  @ApiQuery({
-    name: 'autor',
-    required: false,
-    description: 'Filtro opcional por autor',
-  })
-  @ApiResponse({
-    status: 200,
-    type: AutocompleteResponseDto,
-  })
-  @ApiResponse({
-  status: 400,
-  description:
-    'Parámetros inválidos. Ocurre, por ejemplo, si la palabra clave está vacía.',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Error interno del servidor.',
-  })
-  async autocompleteMateriales(
-    @Query('query') query: string,
-    @Query('materia') materia?: string,
-    @Query('autor') autor?: string,
-  ): Promise<AutocompleteResponseDto> {
-    return this.materialService.autocompleteMaterials(query, materia, autor);
-  }
 
   /**
  * Endpoint para actualizar la versión de un material existente.

@@ -17,6 +17,8 @@ import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 import { GetMaterialRatingsResponseDto, MaterialRatingDto } from './dto/get-material-ratings.dto';
 import { UserMaterialsStatsDto } from './dto/user-materials-stats.dto';
+import { TopDownloadedMaterialsDto, TopViewedMaterialsDto, MaterialRankingDto } from './dto/top-materials.dto';
+import { UserTagsPercentageDto } from './dto/user-tags-percentage.dto';
 
 @Injectable()
 export class MaterialService {
@@ -340,17 +342,31 @@ export class MaterialService {
     const allTags = subject ? tags.concat([subject]) : tags;
     if (allTags && allTags.length > 0) {
       for (const tag of allTags) {
-        // Verificar si la etiqueta ya existe
-        let etiqueta = await this.prisma.tags.findUnique({
-          where: { tag: tag },
+        // Normalizar el tag a minúsculas para búsqueda insensible a mayúsculas
+        const tagNormalizado = tag.toLowerCase().trim();
+
+        // Buscar etiqueta existente (case-insensitive)
+        const etiquetaExistente = await this.prisma.tags.findFirst({
+          where: {
+            tag: {
+              equals: tagNormalizado,
+              mode: 'insensitive',
+            },
+          },
         });
-        // Si no existe, crearla
+
+        let etiqueta = etiquetaExistente;
+
+        // Si no existe, crearla con el tag normalizado
         if (!etiqueta) {
           etiqueta = await this.prisma.tags.create({
-            data: { tag: tag },
+            data: { tag: tagNormalizado },
           });
-          this.logger.log(`Etiqueta creada: ${tag}`);
+          this.logger.log(`Etiqueta creada: ${tagNormalizado}`);
+        } else {
+          this.logger.log(`Etiqueta existente encontrada: ${etiqueta.tag}`);
         }
+
         // Crear la relación entre material y etiqueta
         await this.prisma.materialTags.create({
           data: {
@@ -515,11 +531,11 @@ export class MaterialService {
   }
 
   /**
-   * Obtiene los top 3 materiales más descargados de un usuario
+   * Obtiene el top 3 de materiales más descargados de un usuario
    * @param userId - ID del usuario
-   * @returns Array de materiales ordenados por descargas descendentes
+   * @returns Objeto con el top 3 de materiales más descargados
    */
-  async getTopDownloadedMaterials(userId: string): Promise<MaterialDto[]> {
+  async getTopDownloadedMaterials(userId: string): Promise<TopDownloadedMaterialsDto> {
     // Validar que el usuario existe
     const userExists = await this.prisma.usuarios.findUnique({
       where: { id: userId },
@@ -528,26 +544,47 @@ export class MaterialService {
       throw new NotFoundException(`El usuario ${userId} no existe`);
     }
 
+    // Obtener top 3 materiales más descargados del usuario
     const materiales = await this.prisma.materiales.findMany({
       where: { userId },
+      select: {
+        id: true,
+        nombre: true,
+        descargas: true,
+        vistos: true,
+        Calificaciones: true,
+      },
       orderBy: { descargas: 'desc' },
       take: 3,
-      include: {
-        MaterialTags: { include: { Tags: true } },
-        Calificaciones: true,
-        usuarios: { select: { nombre: true } },
-      },
     });
 
-    return materiales.map((m: any) => this.toMaterialDto(m));
+    return {
+      userId,
+      topDownloaded: materiales.map((m: any) => {
+        const calificacionPromedio =
+          m.Calificaciones && m.Calificaciones.length > 0
+            ? m.Calificaciones.reduce(
+                (acc: number, c: any) => acc + c.calificacion,
+                0,
+              ) / m.Calificaciones.length
+            : 0;
+        return {
+          id: m.id,
+          nombre: m.nombre,
+          descargas: m.descargas ?? 0,
+          vistos: m.vistos ?? 0,
+          calificacionPromedio,
+        };
+      }),
+    };
   }
 
   /**
-   * Obtiene los top 3 materiales más vistos de un usuario
+   * Obtiene el top 3 de materiales más vistos de un usuario
    * @param userId - ID del usuario
-   * @returns Array de materiales ordenados por vistas descendentes
+   * @returns Objeto con el top 3 de materiales más vistos
    */
-  async getTopViewedMaterials(userId: string): Promise<MaterialDto[]> {
+  async getTopViewedMaterials(userId: string): Promise<TopViewedMaterialsDto> {
     // Validar que el usuario existe
     const userExists = await this.prisma.usuarios.findUnique({
       where: { id: userId },
@@ -556,18 +593,91 @@ export class MaterialService {
       throw new NotFoundException(`El usuario ${userId} no existe`);
     }
 
+    // Obtener top 3 materiales más vistos del usuario
     const materiales = await this.prisma.materiales.findMany({
       where: { userId },
+      select: {
+        id: true,
+        nombre: true,
+        descargas: true,
+        vistos: true,
+        Calificaciones: true,
+      },
       orderBy: { vistos: 'desc' },
       take: 3,
+    });
+
+    return {
+      userId,
+      topViewed: materiales.map((m: any) => {
+        const calificacionPromedio =
+          m.Calificaciones && m.Calificaciones.length > 0
+            ? m.Calificaciones.reduce(
+                (acc: number, c: any) => acc + c.calificacion,
+                0,
+              ) / m.Calificaciones.length
+            : 0;
+        return {
+          id: m.id,
+          nombre: m.nombre,
+          descargas: m.descargas ?? 0,
+          vistos: m.vistos ?? 0,
+          calificacionPromedio,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Obtiene los tags utilizados por un usuario y su porcentaje de uso
+   * @param userId - ID del usuario
+   * @returns Objeto con userId y array de tags con sus porcentajes (suma = 100%)
+   */
+  async getUserTagsPercentage(userId: string): Promise<UserTagsPercentageDto> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    // Obtener todos los materiales del usuario con sus tags
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
       include: {
-        MaterialTags: { include: { Tags: true } },
-        Calificaciones: true,
-        usuarios: { select: { nombre: true } },
+        MaterialTags: {
+          include: {
+            Tags: true,
+          },
+        },
       },
     });
 
-    return materiales.map((m: any) => this.toMaterialDto(m));
+    // Contar ocurrencias de cada tag
+    const tagCount: { [key: string]: number } = {};
+    let totalTags = 0;
+
+    materiales.forEach((material: any) => {
+      material.MaterialTags.forEach((materialTag: any) => {
+        const tagName = materialTag.Tags.tag;
+        tagCount[tagName] = (tagCount[tagName] || 0) + 1;
+        totalTags++;
+      });
+    });
+
+    // Calcular porcentajes
+    const tagsWithPercentage = Object.entries(tagCount)
+      .map(([tag, count]) => ({
+        tag,
+        porcentaje: totalTags > 0 ? (count / totalTags) * 100 : 0,
+      }))
+      .sort((a, b) => b.porcentaje - a.porcentaje); // Ordenar por porcentaje descendente
+
+    return {
+      userId,
+      tags: tagsWithPercentage,
+    };
   }
 
   /**
@@ -575,6 +685,41 @@ export class MaterialService {
    */
   async getAllMaterials(skip?: number, take?: number): Promise<MaterialDto[]> {
     const materiales = await this.prisma.materiales.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
+      skip: skip ? Number(skip) : undefined,
+      take: take ? Number(take) : undefined,
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+        usuarios: { select: { nombre: true } },
+      },
+    });
+
+    return materiales.map((m: any) => this.toMaterialDto(m));
+  }
+
+  /**
+   * Busca materiales por nombre (búsqueda parcial).
+   * Busca en el nombre del material de forma insensible a mayúsculas/minúsculas.
+   */
+  async searchMaterialsByName(nombre: string, skip?: number, take?: number): Promise<MaterialDto[]> {
+    const term = nombre?.trim();
+
+    if (!term || term.length < 1) {
+      throw new BadRequestException(
+        'El término de búsqueda debe tener al menos 1 carácter',
+      );
+    }
+
+    const materiales = await this.prisma.materiales.findMany({
+      where: {
+        nombre: {
+          contains: term,
+          mode: 'insensitive',
+        },
+      },
       orderBy: {
         createdAt: 'desc',
       },
@@ -1007,156 +1152,6 @@ export class MaterialService {
    * - contadorResultados: número total de coincidencias 
    *
    */
-  async autocompleteMaterials(
-    palabraClave: string,
-    materia?: string,
-    autor?: string,   
-  ): Promise<AutocompleteResponseDto> {
-    const term = palabraClave?.trim();
-
-    if (!term || term.length < 1) {
-      throw new BadRequestException(
-        'La palabra clave debe tener al menos 1 carácter',
-      );
-    }
-
-    const whereBase: any = {
-      OR: [
-        { nombre: { contains: term, mode: 'insensitive' } },
-        { descripcion: { contains: term, mode: 'insensitive' } },
-      ],
-    };
-
-    if (autor) {
-      whereBase.usuarios = {
-        OR: [
-          { nombre: { contains: autor, mode: 'insensitive' } },
-          { apellido: { contains: autor, mode: 'insensitive' } },
-        ],
-      };
-    }
-
-    const contadorResultados = await this.prisma.materiales.count({
-      where: whereBase,
-    });
-
-    if (contadorResultados === 0) {
-      return {
-        listaResultados: [],
-        contadorResultados: 0,
-      };
-    }
-
-    const select = {
-      id: true,
-      nombre: true,
-      descripcion: true,
-      descargas: true,
-      usuarios: {
-        select: { nombre: true, apellido: true },
-      },
-    };
-
-    const sugerencias: any[] = [];
-    const seen = new Set<string>();
-
-    const addUnique = (arr: any[]) => {
-      for (const item of arr) {
-        if (sugerencias.length >= 5) break;
-        if (seen.has(item.id)) continue;
-        seen.add(item.id);
-        sugerencias.push(item);
-      }
-    };
-
-    const inicio = await this.prisma.materiales.findMany({
-      where: {
-        AND: [
-          whereBase,
-          {
-            nombre: { startsWith: term, mode: 'insensitive' },
-          },
-        ],
-      },
-      select,
-      take: 5,
-    });
-    addUnique(inicio);
-
-    if (sugerencias.length < 5) {
-      const contieneTitulo = await this.prisma.materiales.findMany({
-        where: {
-          AND: [
-            whereBase,
-            {
-              nombre: {
-                contains: term,
-                mode: 'insensitive',
-              },
-            },
-            {
-              NOT: {
-                nombre: {
-                  startsWith: term,
-                  mode: 'insensitive',
-                },
-              },
-            },
-          ],
-        },
-        select,
-        take: 5,
-      });
-      addUnique(contieneTitulo);
-    }
-
-    if (sugerencias.length < 5) {
-      const descripcionMatches = await this.prisma.materiales.findMany({
-        where: {
-          AND: [
-            whereBase,
-            {
-              descripcion: {
-                contains: term,
-                mode: 'insensitive',
-              },
-            },
-          ],
-        },
-        select,
-        take: 5,
-      });
-      addUnique(descripcionMatches);
-    }
-
-    const listaResultados: AutocompleteResponseDto['listaResultados'] = [];
-
-
-    for (const mat of sugerencias) {
-      const promedioAgg = await this.prisma.calificaciones.aggregate({
-        where: { idMaterial: mat.id },
-        _avg: { calificacion: true },
-      });
-
-      const autorNombre = mat.usuarios
-        ? `${mat.usuarios.nombre} ${mat.usuarios.apellido}`.trim()
-        : null;
-
-      listaResultados.push({
-        id: mat.id,
-        titulo: mat.nombre,
-        autor: autorNombre,
-        materia: null, 
-        calificacionPromedio: promedioAgg._avg.calificacion ?? null,
-        descargas: mat.descargas,
-      });
-    }
-
-    return {
-      listaResultados,
-      contadorResultados,
-    };
-  }
 
   /**
  * Actualiza la versión de un material existente:
