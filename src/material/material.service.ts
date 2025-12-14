@@ -160,7 +160,7 @@ export class MaterialService {
     correlationId: string,
     filename: string,
   ): Promise<{ blobName: string; fileUrl: string; response: RespuestaIADto }> {
-    const blobName = `${correlationId}-${filename}`;
+    const blobName = `${filename}`;
     
     // Subir al blob
     let fileUrl: string;
