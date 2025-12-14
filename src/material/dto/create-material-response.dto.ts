@@ -26,8 +26,10 @@ export class CreateMaterialResponseDto {
   @ApiProperty({
     description: 'Materia o tema del material',
     example: 'Matematicas',
+    required: false,
+    nullable: true,
   })
-  subject: string;
+  subject?: string;
 
   @ApiProperty({
     description: 'Nombre del archivo PDF',

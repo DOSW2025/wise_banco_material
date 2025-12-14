@@ -15,7 +15,10 @@ import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
-import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
+import { GetMaterialRatingsResponseDto, MaterialRatingDto } from './dto/get-material-ratings.dto';
+import { UserMaterialsStatsDto } from './dto/user-materials-stats.dto';
+import { TopDownloadedMaterialsDto, TopViewedMaterialsDto } from './dto/top-materials.dto';
+import { UserTagsPercentageDto } from './dto/user-tags-percentage.dto';
 
 @Injectable()
 export class MaterialService {
@@ -227,10 +230,12 @@ export class MaterialService {
     });
   }
 
-  /**  * Maneja la respuesta de IA: guarda el material si es válido, o elimina el blob si no lo es */
+  /**
+   * Maneja la respuesta de IA: guarda el material si es válido, o elimina el blob si no lo es
+   */
   private async handleResponse(
     response: RespuestaIADto,
-    subject: string,
+    subject: string | undefined,
     ctx: {
       correlationId: string;
       filename: string;
@@ -315,8 +320,9 @@ export class MaterialService {
    * Guarda un material y sus etiquetas asociadas en la base de datos.
    * @param material Objeto Material a guardar
    * @param tags Lista de etiquetas asociadas al material
+   * @param subject Materia o tema del material (opcional)
    */
-  async guardarMaterial(material: Material, tags: string[], subject: string) {
+  async guardarMaterial(material: Material, tags: string[], subject?: string) {
     // Usamos upsert para actualizar el registro provisional creado antes del upload
     await this.prisma.materiales.create({
       data: material,
@@ -326,22 +332,41 @@ export class MaterialService {
     await this.guardarTags(tags, material.id, subject);
   }
 
-  /**  * Guarda las etiquetas asociadas a un material, creando nuevas si es necesario */
-  async guardarTags(tags: string[], materialId: string, subject: string) {
-    const allTags = tags.concat([subject]);
+  /**
+   * Guarda las etiquetas asociadas a un material, creando nuevas si es necesario
+   * @param tags Lista de etiquetas de la IA
+   * @param materialId ID del material
+   * @param subject Materia o tema del material (opcional, se agrega como etiqueta si se proporciona)
+   */
+  async guardarTags(tags: string[], materialId: string, subject?: string) {
+    const allTags = subject ? tags.concat([subject]) : tags;
     if (allTags && allTags.length > 0) {
       for (const tag of allTags) {
-        // Verificar si la etiqueta ya existe
-        let etiqueta = await this.prisma.tags.findUnique({
-          where: { tag: tag },
+        // Normalizar el tag a minúsculas para búsqueda insensible a mayúsculas
+        const tagNormalizado = tag.toLowerCase().trim();
+
+        // Buscar etiqueta existente (case-insensitive)
+        const etiquetaExistente = await this.prisma.tags.findFirst({
+          where: {
+            tag: {
+              equals: tagNormalizado,
+              mode: 'insensitive',
+            },
+          },
         });
-        // Si no existe, crearla
+
+        let etiqueta = etiquetaExistente;
+
+        // Si no existe, crearla con el tag normalizado
         if (!etiqueta) {
           etiqueta = await this.prisma.tags.create({
-            data: { tag: tag },
+            data: { tag: tagNormalizado },
           });
-          this.logger.log(`Etiqueta creada: ${tag}`);
+          this.logger.log(`Etiqueta creada: ${tagNormalizado}`);
+        } else {
+          this.logger.log(`Etiqueta existente encontrada: ${etiqueta.tag}`);
         }
+
         // Crear la relación entre material y etiqueta
         await this.prisma.materialTags.create({
           data: {
@@ -451,10 +476,250 @@ export class MaterialService {
   }
 
   /**
+   * Obtiene las estadísticas agregadas de todos los materiales de un usuario
+   * @param userId - ID del usuario
+   * @returns Objeto con estadísticas: calificacionPromedio, totalMateriales, totalDescargas, totalVistas
+   */
+  async getUserMaterialsStats(userId: string): Promise<UserMaterialsStatsDto> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    // Obtener todos los materiales del usuario
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      include: { Calificaciones: true },
+    });
+
+    // Calcular estadísticas
+    const totalMateriales = materiales.length;
+
+    const totalDescargas = materiales.reduce(
+      (acc: number, m: any) => acc + (m.descargas ?? 0),
+      0,
+    );
+
+    const totalVistas = materiales.reduce(
+      (acc: number, m: any) => acc + (m.vistos ?? 0),
+      0,
+    );
+
+    // Obtener todas las calificaciones de todos los materiales del usuario
+    const todasLasCalificaciones = materiales.flatMap(
+      (m: any) => m.Calificaciones ?? [],
+    );
+
+    const calificacionPromedio =
+      todasLasCalificaciones.length > 0
+        ? todasLasCalificaciones.reduce(
+            (acc: number, c: any) => acc + c.calificacion,
+            0,
+          ) / todasLasCalificaciones.length
+        : 0;
+
+    return {
+      userId,
+      calificacionPromedio,
+      totalMateriales,
+      totalDescargas,
+      totalVistas,
+    };
+  }
+
+  /**
+   * Obtiene el top 3 de materiales más descargados de un usuario
+   * @param userId - ID del usuario
+   * @returns Objeto con el top 3 de materiales más descargados
+   */
+  async getTopDownloadedMaterials(userId: string): Promise<TopDownloadedMaterialsDto> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    // Obtener top 3 materiales más descargados del usuario
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        nombre: true,
+        descargas: true,
+        vistos: true,
+        Calificaciones: true,
+      },
+      orderBy: { descargas: 'desc' },
+      take: 3,
+    });
+
+    return {
+      userId,
+      topDownloaded: materiales.map((m: any) => {
+        const calificacionPromedio =
+          m.Calificaciones && m.Calificaciones.length > 0
+            ? m.Calificaciones.reduce(
+                (acc: number, c: any) => acc + c.calificacion,
+                0,
+              ) / m.Calificaciones.length
+            : 0;
+        return {
+          id: m.id,
+          nombre: m.nombre,
+          descargas: m.descargas ?? 0,
+          vistos: m.vistos ?? 0,
+          calificacionPromedio,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Obtiene el top 3 de materiales más vistos de un usuario
+   * @param userId - ID del usuario
+   * @returns Objeto con el top 3 de materiales más vistos
+   */
+  async getTopViewedMaterials(userId: string): Promise<TopViewedMaterialsDto> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    // Obtener top 3 materiales más vistos del usuario
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        nombre: true,
+        descargas: true,
+        vistos: true,
+        Calificaciones: true,
+      },
+      orderBy: { vistos: 'desc' },
+      take: 3,
+    });
+
+    return {
+      userId,
+      topViewed: materiales.map((m: any) => {
+        const calificacionPromedio =
+          m.Calificaciones && m.Calificaciones.length > 0
+            ? m.Calificaciones.reduce(
+                (acc: number, c: any) => acc + c.calificacion,
+                0,
+              ) / m.Calificaciones.length
+            : 0;
+        return {
+          id: m.id,
+          nombre: m.nombre,
+          descargas: m.descargas ?? 0,
+          vistos: m.vistos ?? 0,
+          calificacionPromedio,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Obtiene los tags utilizados por un usuario y su porcentaje de uso
+   * @param userId - ID del usuario
+   * @returns Objeto con userId y array de tags con sus porcentajes (suma = 100%)
+   */
+  async getUserTagsPercentage(userId: string): Promise<UserTagsPercentageDto> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    // Obtener todos los materiales del usuario con sus tags
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      include: {
+        MaterialTags: {
+          include: {
+            Tags: true,
+          },
+        },
+      },
+    });
+
+    // Contar ocurrencias de cada tag
+    const tagCount: { [key: string]: number } = {};
+    let totalTags = 0;
+
+    materiales.forEach((material: any) => {
+      material.MaterialTags.forEach((materialTag: any) => {
+        const tagName = materialTag.Tags.tag;
+        tagCount[tagName] = (tagCount[tagName] || 0) + 1;
+        totalTags++;
+      });
+    });
+
+    // Calcular porcentajes
+    const tagsWithPercentage = Object.entries(tagCount)
+      .map(([tag, count]) => ({
+        tag,
+        porcentaje: totalTags > 0 ? (count / totalTags) * 100 : 0,
+      }))
+      .sort((a, b) => b.porcentaje - a.porcentaje); // Ordenar por porcentaje descendente
+
+    return {
+      userId,
+      tags: tagsWithPercentage,
+    };
+  }
+
+  /**
    * Obtiene todos los materiales del sistema con paginación opcional.
    */
   async getAllMaterials(skip?: number, take?: number): Promise<MaterialDto[]> {
     const materiales = await this.prisma.materiales.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
+      skip: skip ? Number(skip) : undefined,
+      take: take ? Number(take) : undefined,
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+        usuarios: { select: { nombre: true } },
+      },
+    });
+
+    return materiales.map((m: any) => this.toMaterialDto(m));
+  }
+
+  /**
+   * Busca materiales por nombre (búsqueda parcial).
+   * Busca en el nombre del material de forma insensible a mayúsculas/minúsculas.
+   */
+  async searchMaterialsByName(nombre: string, skip?: number, take?: number): Promise<MaterialDto[]> {
+    const term = nombre?.trim();
+
+    if (!term || term.length < 1) {
+      throw new BadRequestException(
+        'El término de búsqueda debe tener al menos 1 carácter',
+      );
+    }
+
+    const materiales = await this.prisma.materiales.findMany({
+      where: {
+        nombre: {
+          contains: term,
+          mode: 'insensitive',
+        },
+      },
       orderBy: {
         createdAt: 'desc',
       },
@@ -581,7 +846,6 @@ export class MaterialService {
 
     const calificaciones = await this.prisma.calificaciones.findMany({
       where: { idMaterial: materialId },
-      orderBy: { createdAt: 'desc' },
     });
 
     const totalCalificaciones = calificaciones.length;
@@ -594,13 +858,38 @@ export class MaterialService {
       materialId,
       calificacionPromedio,
       totalCalificaciones,
-      calificaciones: calificaciones.map((c: any) => ({
-        id: c.id,
-        calificacion: c.calificacion,
-        comentario: c.comentario ?? null,
-        createdAt: c.createdAt,
-      })),
+      totalDescargas: material.descargas,
+      totalVistas: material.vistos,
     };
+  }
+
+  /**
+   * Obtiene todas las calificaciones de un material
+   * @param materialId - ID del material
+   * @returns Lista de calificaciones del material
+   */
+  async getMaterialRatingsList(
+    materialId: string,
+  ): Promise<MaterialRatingDto[]> {
+    const material = await this.prisma.materiales.findUnique({
+      where: { id: materialId },
+    });
+    if (!material) {
+      this.logger.warn(`Intento de obtener calificaciones de material inexistente: ${materialId}`);
+      throw new NotFoundException('Material no encontrado');
+    }
+
+    const calificaciones = await this.prisma.calificaciones.findMany({
+      where: { idMaterial: materialId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return calificaciones.map((c: any) => ({
+      id: c.id,
+      calificacion: c.calificacion,
+      comentario: c.comentario ?? null,
+      createdAt: c.createdAt,
+    }));
   }
       
    /*
@@ -863,169 +1152,20 @@ export class MaterialService {
    * - contadorResultados: número total de coincidencias 
    *
    */
-  async autocompleteMaterials(
-    palabraClave: string,
-    materia?: string,
-    autor?: string,   
-  ): Promise<AutocompleteResponseDto> {
-    const term = palabraClave?.trim();
-
-    if (!term || term.length < 1) {
-      throw new BadRequestException(
-        'La palabra clave debe tener al menos 1 carácter',
-      );
-    }
-
-    const whereBase: any = {
-      OR: [
-        { nombre: { contains: term, mode: 'insensitive' } },
-        { descripcion: { contains: term, mode: 'insensitive' } },
-      ],
-    };
-
-    if (autor) {
-      whereBase.usuarios = {
-        OR: [
-          { nombre: { contains: autor, mode: 'insensitive' } },
-          { apellido: { contains: autor, mode: 'insensitive' } },
-        ],
-      };
-    }
-
-    const contadorResultados = await this.prisma.materiales.count({
-      where: whereBase,
-    });
-
-    if (contadorResultados === 0) {
-      return {
-        listaResultados: [],
-        contadorResultados: 0,
-      };
-    }
-
-    const select = {
-      id: true,
-      nombre: true,
-      descripcion: true,
-      descargas: true,
-      usuarios: {
-        select: { nombre: true, apellido: true },
-      },
-    };
-
-    const sugerencias: any[] = [];
-    const seen = new Set<string>();
-
-    const addUnique = (arr: any[]) => {
-      for (const item of arr) {
-        if (sugerencias.length >= 5) break;
-        if (seen.has(item.id)) continue;
-        seen.add(item.id);
-        sugerencias.push(item);
-      }
-    };
-
-    const inicio = await this.prisma.materiales.findMany({
-      where: {
-        AND: [
-          whereBase,
-          {
-            nombre: { startsWith: term, mode: 'insensitive' },
-          },
-        ],
-      },
-      select,
-      take: 5,
-    });
-    addUnique(inicio);
-
-    if (sugerencias.length < 5) {
-      const contieneTitulo = await this.prisma.materiales.findMany({
-        where: {
-          AND: [
-            whereBase,
-            {
-              nombre: {
-                contains: term,
-                mode: 'insensitive',
-              },
-            },
-            {
-              NOT: {
-                nombre: {
-                  startsWith: term,
-                  mode: 'insensitive',
-                },
-              },
-            },
-          ],
-        },
-        select,
-        take: 5,
-      });
-      addUnique(contieneTitulo);
-    }
-
-    if (sugerencias.length < 5) {
-      const descripcionMatches = await this.prisma.materiales.findMany({
-        where: {
-          AND: [
-            whereBase,
-            {
-              descripcion: {
-                contains: term,
-                mode: 'insensitive',
-              },
-            },
-          ],
-        },
-        select,
-        take: 5,
-      });
-      addUnique(descripcionMatches);
-    }
-
-    const listaResultados: AutocompleteResponseDto['listaResultados'] = [];
-
-
-    for (const mat of sugerencias) {
-      const promedioAgg = await this.prisma.calificaciones.aggregate({
-        where: { idMaterial: mat.id },
-        _avg: { calificacion: true },
-      });
-
-      const autorNombre = mat.usuarios
-        ? `${mat.usuarios.nombre} ${mat.usuarios.apellido}`.trim()
-        : null;
-
-      listaResultados.push({
-        id: mat.id,
-        titulo: mat.nombre,
-        autor: autorNombre,
-        materia: null, 
-        calificacionPromedio: promedioAgg._avg.calificacion ?? null,
-        descargas: mat.descargas,
-      });
-    }
-
-    return {
-      listaResultados,
-      contadorResultados,
-    };
-  }
 
   /**
  * Actualiza la versión de un material existente:
- * - Reemplaza el archivo PDF en Blob Storage
- * - Actualiza metadata (título, descripción, url, extensión, hash, updatedAt)
- * - Regenera tags (tags IA + subject)
+ * - Opcionalmente reemplaza el archivo PDF en Blob Storage
+ * - Actualiza: archivo (opcional), título, descripción
+ * - Mantiene los tags existentes
  */
 async updateMaterialVersion(
   materialId: string,
-  pdfBuffer: Buffer,
-  materialData: CreateMaterialDto,
+  pdfBuffer: Buffer | undefined,
+  title: string,
+  description?: string,
   originalName?: string,
-): Promise<CreateMaterialResponseDto> {
+): Promise<any> {
   // Verificar que el material existe
   const existing = await this.prisma.materiales.findUnique({
     where: { id: materialId },
@@ -1036,75 +1176,80 @@ async updateMaterialVersion(
     throw new NotFoundException('Material no encontrado');
   }
 
-  // Verificar que el usuario existe
-  await this.validateUserExists(materialData.userId);
+  let hash = existing.hash;
+  let extension = existing.extension;
+  let newFileUrl = existing.url;
+  let blobName: string | null = null;
+  let correlationId: string | null = null;
 
-  const correlationId = uuid();
-  const filename = materialData.title;
-  const { hash, extension } = this.calculateHashAndExtension(pdfBuffer, originalName);
+  // Si se proporciona un nuevo archivo, procesarlo
+  if (pdfBuffer) {
+    correlationId = uuid();
+    const filename = title;
+    const hashResult = this.calculateHashAndExtension(pdfBuffer, originalName);
+    hash = hashResult.hash;
+    extension = hashResult.extension;
 
-  // Verificar hash duplicado (excluyendo el material actual)
-  await this.checkDuplicateHash(hash, materialId);
+    // Verificar hash duplicado (excluyendo el material actual)
+    await this.checkDuplicateHash(hash, materialId);
 
-  // Subir blob y obtener respuesta de IA
-  const { blobName, response } = await this.uploadAndAnalyze(
-    pdfBuffer,
-    correlationId,
-    filename,
-  );
-
-  // Validar respuesta de IA
-  if (!response.valid) {
-    const reason = response.detalles;
-    this.logger.log(
-      `Material actualizado marcado como NO VÁLIDO por IA (correlationId=${correlationId})` +
-        (reason ? ` - motivo: ${reason}` : ''),
+    // Subir blob y obtener respuesta de IA
+    const uploadResult = await this.uploadAndAnalyze(
+      pdfBuffer,
+      correlationId,
+      filename,
     );
-    await this.deleteBlobSafe(blobName, correlationId);
-    const message = reason
-      ? `PDF falló la validación automatizada: ${reason}`
-      : 'PDF falló la validación automatizada';
-    throw new UnprocessableEntityException(message);
+    blobName = uploadResult.blobName;
+    const response = uploadResult.response;
+
+    // Validar respuesta de IA
+    if (!response.valid) {
+      const reason = response.detalles;
+      this.logger.log(
+        `Material actualizado marcado como NO VÁLIDO por IA (correlationId=${correlationId})` +
+          (reason ? ` - motivo: ${reason}` : ''),
+      );
+      await this.deleteBlobSafe(blobName, correlationId);
+      const message = reason
+        ? `PDF falló la validación automatizada: ${reason}`
+        : 'PDF falló la validación automatizada';
+      throw new UnprocessableEntityException(message);
+    }
+
+    this.logger.log(
+      `Material validado como VÁLIDO por IA en actualización (correlationId=${correlationId})`,
+    );
+
+    newFileUrl = this.buildBlobUrl(blobName);
   }
-
-  this.logger.log(
-    `Material validado como VÁLIDO por IA en actualización (correlationId=${correlationId})`,
-  );
-
-  const newFileUrl = this.buildBlobUrl(blobName);
-
-  // Eliminar tags anteriores y guardar nuevos
-  await this.prisma.materialTags.deleteMany({
-    where: { idMaterial: materialId },
-  });
-  await this.guardarTags(response.tags, materialId, materialData.subject);
 
   // Actualizar material en BD
   const updated = await this.prisma.materiales.update({
     where: { id: materialId },
     data: {
-      nombre: filename,
-      descripcion: materialData.description,
-      url: newFileUrl,
+      nombre: title,
+      descripcion: description || existing.descripcion,
+      ...(newFileUrl && newFileUrl !== existing.url && { url: newFileUrl }),
       extension,          
       hash,
       updatedAt: new Date(),
     },
   });
 
-  await this.sendAnalysisMessage('', blobName, correlationId, 'save');
-
-  // Eliminar blob anterior
-  await this.deleteOldBlob(existing.url, materialId);
+  // Si se subió un nuevo archivo, registrar análisis y eliminar el anterior
+  if (blobName && correlationId) {
+    await this.sendAnalysisMessage('', blobName, correlationId, 'save');
+    await this.deleteOldBlob(existing.url, materialId);
+  }
 
   return {
     id: updated.id,
-    title: materialData.title,
-    description: materialData.description,
-    subject: materialData.subject,
-    filename,
-    fileUrl: newFileUrl,
+    title,
+    description: description || existing.descripcion,
+    filename: title,
+    fileUrl: updated.url,
     createdAt: existing.createdAt, 
+    message: 'Material actualizado correctamente',
   };
 }
 
@@ -1146,6 +1291,42 @@ private async deleteOldBlob(oldUrl: string | null, materialId: string): Promise<
 async getMaterialsCount(): Promise<{ Count: number }> {
   const count = await this.prisma.materiales.count();
   return { Count: count };
+}
+
+/**
+ * Elimina un material por ID
+ * - Valida que el material exista
+ * - Elimina el blob de Azure Storage
+ * - Elimina registros relacionados (cascada)
+ * - Elimina el material de la base de datos
+ */
+async deleteMaterial(materialId: string): Promise<{ message: string }> {
+  // Verificar que el material existe
+  const material = await this.prisma.materiales.findUnique({
+    where: { id: materialId },
+  });
+
+  if (!material) {
+    throw new NotFoundException(
+      `El material con ID ${materialId} no existe`,
+    );
+  }
+
+  // Eliminar el blob de Azure Storage de forma segura
+  if (material.url) {
+    await this.deleteOldBlob(material.url, materialId);
+  }
+
+  // Eliminar el material (la cascada en Prisma eliminará Calificaciones, MaterialTags y Resumen)
+  await this.prisma.materiales.delete({
+    where: { id: materialId },
+  });
+
+  this.logger.log(`Material ${materialId} eliminado correctamente`);
+
+  return {
+    message: `Material ${materialId} eliminado correctamente`,
+  };
 }
 
 }

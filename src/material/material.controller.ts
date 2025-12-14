@@ -1,4 +1,4 @@
-import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,Put} from '@nestjs/common';
+import {Controller,Post,UploadedFile,UseInterceptors,BadRequestException,Body,Logger,Get,Param, Query,UsePipes,ValidationPipe, Res, Req,Put,Delete,DefaultValuePipe, ParseIntPipe} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MaterialService } from './material.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,7 +9,6 @@ import { UserMaterialsResponseDto } from './dto/user-materials-response.dto';
 import { CreateMaterialDto } from './dto/createMaterial.dto';
 import { CreateMaterialResponseDto } from './dto/create-material-response.dto';
 import { MaterialDetailDto } from './dto/material-detail.dto';
-import { DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import { CreateRatingDto } from './dto/create-rating.dto';
 import { RateMaterialResponseDto } from './dto/rate-material-response.dto';
 import { SearchMaterialsDto } from './dto/search-materials.dto';
@@ -17,6 +16,9 @@ import { PaginatedMaterialsDto } from './dto/paginated-materials.dto';
 import { AutocompleteResponseDto } from './dto/autocomplete-response.dto';
 import { GetMaterialRatingsResponseDto } from './dto/get-material-ratings.dto';
 import { MaterialsCountDto } from './dto/materials-count.dto';
+import { UserMaterialsStatsDto } from './dto/user-materials-stats.dto';
+import { TopDownloadedMaterialsDto, TopViewedMaterialsDto } from './dto/top-materials.dto';
+import { UserTagsPercentageDto } from './dto/user-tags-percentage.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -57,7 +59,9 @@ export class MaterialController {
    * Reglas de validacion:
    * - title: obligatorio, minimo 3 caracteres
    * - description: opcional, maximo 300 caracteres
-   * - subject: obligatorio
+   * - title: obligatorio, minimo 3 caracteres
+   * - description: opcional, maximo 300 caracteres
+   * - subject: opcional
    * - file: obligatorio, tipo PDF
    * - userId: obligatorio y debe existir en la tabla User
    */
@@ -96,8 +100,9 @@ export class MaterialController {
         },
         subject: {
           type: 'string',
-          description: 'Materia o tema del material.',
+          description: 'Materia o tema del material (opcional).',
           example: 'Matematicas',
+          nullable: true,
         },
         userId: {
           type: 'string',
@@ -105,7 +110,7 @@ export class MaterialController {
           example: 'user-123',
         },
       },
-      required: ['file', 'title', 'subject', 'userId'],
+      required: ['file', 'title', 'userId'],
     },
   })
   @ApiResponse({
@@ -181,6 +186,143 @@ export class MaterialController {
   }
 
   /**
+   * Endpoint para obtener estadísticas agregadas de todos los materiales de un usuario.
+   *
+   * Retorna:
+   * - Calificación promedio de todos los materiales del usuario
+   * - Total de calificaciones registradas
+   * - Total de descargas de todos los materiales
+   * - Total de vistas de todos los materiales
+   */
+  @Get('user/:userId/stats')
+  @ApiOperation({
+    summary: 'Obtener estadísticas agregadas de un usuario',
+    description:
+      'Retorna las estadísticas agregadas de todos los materiales de un usuario (calificación promedio, total de calificaciones, descargas y vistas).',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Estadísticas agregadas del usuario.',
+    type: UserMaterialsStatsDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getUserMaterialsStats(
+    @Param('userId') userId: string,
+  ): Promise<UserMaterialsStatsDto> {
+    return this.materialService.getUserMaterialsStats(userId);
+  }
+
+  /**
+   * Endpoint para obtener el top 3 de materiales más descargados de un usuario.
+   *
+   * Retorna:
+   * - ID del usuario
+   * - Array con los 3 materiales más descargados (id, nombre, descargas, vistos)
+   * - Si no hay materiales, devuelve array vacío
+   */
+  @Get('user/:userId/top-downloaded')
+  @ApiOperation({
+    summary: 'Obtener top 3 materiales más descargados del usuario',
+    description:
+      'Retorna los 3 materiales más descargados de un usuario específico, ordenados por número de descargas descendente.',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Top 3 materiales más descargados.',
+    type: TopDownloadedMaterialsDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getTopDownloadedMaterials(
+    @Param('userId') userId: string,
+  ): Promise<TopDownloadedMaterialsDto> {
+    return this.materialService.getTopDownloadedMaterials(userId);
+  }
+
+  /**
+   * Endpoint para obtener el top 3 de materiales más vistos de un usuario.
+   *
+   * Retorna:
+   * - ID del usuario
+   * - Array con los 3 materiales más vistos (id, nombre, descargas, vistos)
+   * - Si no hay materiales, devuelve array vacío
+   */
+  @Get('user/:userId/top-viewed')
+  @ApiOperation({
+    summary: 'Obtener top 3 materiales más vistos del usuario',
+    description:
+      'Retorna los 3 materiales más vistos de un usuario específico, ordenados por número de vistas descendente.',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Top 3 materiales más vistos.',
+    type: TopViewedMaterialsDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getTopViewedMaterials(
+    @Param('userId') userId: string,
+  ): Promise<TopViewedMaterialsDto> {
+    return this.materialService.getTopViewedMaterials(userId);
+  }
+
+  /**
+   * Endpoint para obtener los tags utilizados por un usuario y su porcentaje de uso.
+   *
+   * Retorna:
+   * - ID del usuario
+   * - Array de tags con sus porcentajes (suma total = 100%)
+   * - Ordenados por porcentaje descendente
+   */
+  @Get('user/:userId/tags-percentage')
+  @ApiOperation({
+    summary: 'Obtener tags y porcentajes de un usuario',
+    description:
+      'Retorna todos los tags utilizados en los materiales de un usuario con su porcentaje de uso respecto al total (suma = 100%).',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Tags con porcentajes del usuario.',
+    type: UserTagsPercentageDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getUserTagsPercentage(
+    @Param('userId') userId: string,
+  ): Promise<UserTagsPercentageDto> {
+    return this.materialService.getUserTagsPercentage(userId);
+  }
+
+  /**
    * Endpoint para obtener los materiales más populares del sistema.
    *
    * La popularidad se mide según vistas/descargas (la lógica exacta está en el servicio).
@@ -236,6 +378,56 @@ export class MaterialController {
   })
   async getMaterialsCount(): Promise<MaterialsCountDto> {
     return this.materialService.getMaterialsCount();
+  }
+
+  /**
+   * Endpoint para buscar materiales por nombre (búsqueda parcial).
+   * Devuelve materiales cuyo nombre coincida (parcialmente) con la búsqueda.
+   */
+  @Get('search')
+  @ApiOperation({
+    summary: 'Buscar materiales por nombre',
+    description: 'Busca materiales cuyo nombre contenga el término especificado (búsqueda parcial, insensible a mayúsculas/minúsculas).',
+  })
+  @ApiQuery({
+    name: 'nombre',
+    required: true,
+    description: 'Término de búsqueda para el nombre del material',
+  })
+  @ApiQuery({
+    name: 'skip',
+    required: false,
+    type: Number,
+    description: 'Número de registros a saltar (para paginación)',
+    example: 0,
+  })
+  @ApiQuery({
+    name: 'take',
+    required: false,
+    type: Number,
+    description: 'Número de registros a obtener (para paginación)',
+    example: 10,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de materiales que coinciden con la búsqueda.',
+    type: MaterialDto,
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'El parámetro de búsqueda es inválido o vacío.',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
+  async searchMaterialsByName(
+    @Query('nombre') nombre: string,
+    @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,
+    @Query('take', new DefaultValuePipe(10), ParseIntPipe) take: number,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.searchMaterialsByName(nombre, skip, take);
   }
 
   /**
@@ -365,6 +557,40 @@ export class MaterialController {
     @Param('id') materialId: string,
   ): Promise<GetMaterialRatingsResponseDto> {
     return this.materialService.getMaterialRatings(materialId);
+  }
+
+  /**
+   * Endpoint para obtener el listado de todas las calificaciones de un material.
+   *
+   * Retorna:
+   * - Lista de calificaciones del material ordenadas por fecha descendente
+   * - Cada calificación contiene: id, calificación, comentario, fecha
+   */
+  @Get(':id/ratings/list')
+  @ApiOperation({
+    summary: 'Obtener listado de calificaciones de un material',
+    description:
+      'Retorna el listado completo de todas las calificaciones registradas para un material específico.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del material',
+    example: 'mat-1',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de calificaciones del material ordenadas por fecha descendente.',
+    type: 'array',
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El material no existe.',
+  })
+  async getMaterialRatingsList(
+    @Param('id') materialId: string,
+  ): Promise<any[]> {
+    return this.materialService.getMaterialRatingsList(materialId);
   }
 
   /**
@@ -518,52 +744,11 @@ export class MaterialController {
   * Busca coincidencias en título, descripción y autor,
   * retornando un máximo de 5 sugerencias ordenadas por relevancia.
   */
-  @Get('autocomplete')
-  @ApiOperation({
-    summary: 'Autocompletado de búsqueda de materiales',
-    description:
-      'Busca en título, descripción y autor. Retorna hasta 5 sugerencias ordenadas por relevancia.',
-  })
-  @ApiQuery({
-    name: 'query',
-    required: true,
-    description: 'Cadena ingresada por el usuario',
-  })
-  @ApiQuery({
-    name: 'materia',
-    required: false,
-    description: 'Materia — no disponible actualmente',
-  })
-  @ApiQuery({
-    name: 'autor',
-    required: false,
-    description: 'Filtro opcional por autor',
-  })
-  @ApiResponse({
-    status: 200,
-    type: AutocompleteResponseDto,
-  })
-  @ApiResponse({
-  status: 400,
-  description:
-    'Parámetros inválidos. Ocurre, por ejemplo, si la palabra clave está vacía.',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Error interno del servidor.',
-  })
-  async autocompleteMateriales(
-    @Query('query') query: string,
-    @Query('materia') materia?: string,
-    @Query('autor') autor?: string,
-  ): Promise<AutocompleteResponseDto> {
-    return this.materialService.autocompleteMaterials(query, materia, autor);
-  }
 
   /**
  * Endpoint para actualizar la versión de un material existente.
  * - Reemplaza el archivo PDF en Blob Storage.
- * - Actualiza la metadata del material y sus tags.
+ * - Actualiza título y descripción del material.
  */
 @Put(':id')
 @UseInterceptors(FileInterceptor('file'))
@@ -571,7 +756,7 @@ export class MaterialController {
 @ApiOperation({
   summary: 'Actualizar versión de un material',
   description:
-    'Reemplaza el archivo PDF y actualiza la metadata de un material existente. ' +
+    'Reemplaza el archivo PDF y actualiza el título y descripción de un material existente. ' +
     'El archivo debe enviarse en el campo `file` (multipart/form-data).',
 })
 @ApiConsumes('multipart/form-data')
@@ -582,14 +767,14 @@ export class MaterialController {
 })
 @ApiBody({
   description:
-    'Datos para actualizar el material. Incluye el archivo PDF y la nueva metadata.',
+    'Datos para actualizar el material. Incluye título, descripción y opcionalmente el archivo PDF.',
   schema: {
     type: 'object',
     properties: {
       file: {
         type: 'string',
         format: 'binary',
-        description: 'Nuevo archivo PDF a subir (campo `file`).',
+        description: 'Nuevo archivo PDF a subir (opcional) (campo `file`).',
       },
       title: {
         type: 'string',
@@ -604,19 +789,8 @@ export class MaterialController {
         maxLength: 300,
         nullable: true,
       },
-      subject: {
-        type: 'string',
-        description: 'Materia o tema del material.',
-        example: 'Matemáticas',
-      },
-      userId: {
-        type: 'string',
-        description:
-          'ID del usuario que realiza la actualización. No cambia la propiedad del material en BD.',
-        example: 'user-123',
-      },
     },
-    required: ['file', 'title', 'subject', 'userId'],
+    required: ['title'],
   },
 })
 @ApiResponse({
@@ -643,20 +817,62 @@ export class MaterialController {
 async actualizarMaterialVersion(
   @Param('id') materialId: string,
   @UploadedFile() file: any,
-  @Body() body: CreateMaterialDto,
-): Promise<CreateMaterialResponseDto> {
-  this.validatePdfFile(file);
+  @Body() body: any,
+): Promise<any> {
+  if (file) {
+    this.validatePdfFile(file);
+  }
 
+  const fileInfo = file ? ` con archivo '${file.originalname}'` : ' sin cambiar archivo';
   this.logger.log(
-    `Actualizando material ${materialId} con archivo '${file.originalname}' (userId=${body.userId})`,
+    `Actualizando material ${materialId}${fileInfo}`,
   );
 
   return this.materialService.updateMaterialVersion(
     materialId,
-    file.buffer,
-    body,
-    file.originalname,
+    file?.buffer,
+    body.title,
+    body.description,
+    file?.originalname,
   );
+}
+
+/**
+ * Endpoint para eliminar un material por ID.
+ *
+ * Realiza las siguientes acciones:
+ * - Valida que el material existe
+ * - Elimina el archivo PDF del almacenamiento (Azure Blob Storage)
+ * - Elimina el registro de la base de datos (incluyendo relaciones en cascada)
+ */
+@Delete(':id')
+@ApiOperation({
+  summary: 'Eliminar un material por ID',
+  description:
+    'Elimina un material específico por su ID. Esto eliminará el archivo PDF del almacenamiento y todos los registros relacionados (calificaciones, tags, resúmenes).',
+})
+@ApiParam({
+  name: 'id',
+  description: 'ID del material a eliminar',
+  example: 'mat-1',
+})
+@ApiResponse({
+  status: 200,
+  description: 'Material eliminado correctamente.',
+})
+@ApiResponse({
+  status: 404,
+  description: 'Material no encontrado.',
+})
+@ApiResponse({
+  status: 500,
+  description: 'Error interno del servidor.',
+})
+async deleteMaterial(
+  @Param('id') materialId: string,
+): Promise<{ message: string }> {
+  this.logger.log(`Eliminando material ${materialId}`);
+  return this.materialService.deleteMaterial(materialId);
 }
   
 }

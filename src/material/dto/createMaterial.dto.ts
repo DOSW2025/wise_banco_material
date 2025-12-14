@@ -30,10 +30,11 @@ export class CreateMaterialDto {
   @ApiProperty({
     description: 'Materia o tema del material',
     example: 'Matematicas',
+    required: false,
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  subject: string;
+  subject?: string;
 
   @ApiProperty({
     description: 'ID del usuario propietario del material',
