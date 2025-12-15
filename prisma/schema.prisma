@@ -10,10 +10,12 @@ datasource db {
 model Calificaciones {
   id           Int        @id @default(autoincrement())
   idMaterial   String
+  userId       String
   calificacion Int
   comentario   String?
   createdAt    DateTime   @default(now())
   Materiales   Materiales @relation(fields: [idMaterial], references: [id], onDelete: Cascade)
+  usuarios     usuarios   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model MaterialTags {
@@ -58,6 +60,7 @@ model usuarios {
   tutoria_tutoria_tutorIdTousuarios   tutoria[]            @relation("tutoria_tutorIdTousuarios")
   estados_usuario                     estados_usuario      @relation(fields: [estado_id], references: [id])
   roles                               roles                @relation(fields: [rol_id], references: [id])
+  Calificaciones                      Calificaciones[]
 
   @@index([email])
   @@index([estado_id])
