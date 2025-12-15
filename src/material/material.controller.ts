@@ -19,6 +19,9 @@ import { MaterialsCountDto } from './dto/materials-count.dto';
 import { UserMaterialsStatsDto } from './dto/user-materials-stats.dto';
 import { TopDownloadedMaterialsDto, TopViewedMaterialsDto } from './dto/top-materials.dto';
 import { UserTagsPercentageDto } from './dto/user-tags-percentage.dto';
+import { GlobalTagsPercentageDto } from './dto/global-tags-percentage.dto';
+import { UserAverageRatingDto } from './dto/user-average-rating.dto';
+import { UserTopMaterialsDto } from './dto/user-top-materials.dto';
 
 /**
  * Controlador para la gestión de materiales (PDF) en el sistema.
@@ -289,6 +292,73 @@ export class MaterialController {
   }
 
   /**
+   * Endpoint para obtener todos los materiales de un usuario ordenados por popularidad.
+   *
+   * Retorna:
+   * - Array de todos los materiales ordenados por descargas DESC, luego vistas DESC
+   */
+  @Get('user/:userId/top')
+  @ApiOperation({
+    summary: 'Obtener todos los materiales ordenados por popularidad',
+    description:
+      'Retorna todos los materiales de un usuario ordenados por popularidad (descargas descendentes, luego vistas descendentes).',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Array de todos los materiales del usuario ordenados por popularidad.',
+    type: 'array',
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getUserTopMaterials(
+    @Param('userId') userId: string,
+  ): Promise<any[]> {
+    return this.materialService.getUserTopMaterials(userId);
+  }
+
+  /**
+   * Endpoint para obtener los tags utilizados por un usuario y su porcentaje de uso.
+   *
+   * Retorna:
+   * - ID del usuario
+   * - Array de tags con sus porcentajes (suma total = 100%)
+   * - Ordenados por porcentaje descendente
+   */
+  @Get('user/:userId/average-rating')
+  @ApiOperation({
+    summary: 'Obtener calificación promedio de un usuario',
+    description:
+      'Retorna la calificación promedio de todos los materiales de un usuario, junto con el total de calificaciones y materiales.',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID del usuario propietario de los materiales',
+    example: 'user-123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Calificación promedio y estadísticas del usuario.',
+    type: UserAverageRatingDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'El usuario no existe.',
+  })
+  async getUserAverageRating(
+    @Param('userId') userId: string,
+  ): Promise<UserAverageRatingDto> {
+    return this.materialService.getUserAverageRating(userId);
+  }
+
+  /**
    * Endpoint para obtener los tags utilizados por un usuario y su porcentaje de uso.
    *
    * Retorna:
@@ -320,6 +390,28 @@ export class MaterialController {
     @Param('userId') userId: string,
   ): Promise<UserTagsPercentageDto> {
     return this.materialService.getUserTagsPercentage(userId);
+  }
+
+  /**
+   * Endpoint para obtener los porcentajes de tags en todos los materiales del sistema.
+   */
+  @Get('stats/tags-percentage')
+  @ApiOperation({
+    summary: 'Obtener porcentajes de tags globales',
+    description:
+      'Devuelve los porcentajes de uso de cada tag en todos los materiales del sistema, sin filtrar por usuario.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Tags con porcentajes y cantidades del sistema completo.',
+    type: GlobalTagsPercentageDto,
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
+  async getGlobalTagsPercentage(): Promise<GlobalTagsPercentageDto> {
+    return this.materialService.getGlobalTagsPercentage();
   }
 
   /**
@@ -428,6 +520,54 @@ export class MaterialController {
     @Query('take', new DefaultValuePipe(10), ParseIntPipe) take: number,
   ): Promise<MaterialDto[]> {
     return this.materialService.searchMaterialsByName(nombre, skip, take);
+  }
+
+  /**
+   * Endpoint para obtener los materiales ordenados por fecha de creación.
+   */
+  @Get('sorted/by-date')
+  @ApiOperation({
+    summary: 'Obtener materiales ordenados por fecha',
+    description:
+      'Devuelve los materiales del sistema ordenados por fecha de creación (más recientes o más antiguos primero).',
+  })
+  @ApiQuery({
+    name: 'order',
+    required: false,
+    enum: ['asc', 'desc'],
+    description: 'Orden de la fecha: "asc" (más antiguos primero) o "desc" (más recientes primero, por defecto)',
+    example: 'desc',
+  })
+  @ApiQuery({
+    name: 'skip',
+    required: false,
+    type: Number,
+    description: 'Número de registros a saltar (para paginación)',
+    example: 0,
+  })
+  @ApiQuery({
+    name: 'take',
+    required: false,
+    type: Number,
+    description: 'Número de registros a obtener (para paginación)',
+    example: 10,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de materiales ordenados por fecha.',
+    type: MaterialDto,
+    isArray: true,
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor.',
+  })
+  async getMaterialsByDate(
+    @Query('order', new DefaultValuePipe('desc')) order: 'asc' | 'desc',
+    @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,
+    @Query('take', new DefaultValuePipe(10), ParseIntPipe) take: number,
+  ): Promise<MaterialDto[]> {
+    return this.materialService.getMaterialsByDate(order, skip, take);
   }
 
   /**

@@ -22,6 +22,12 @@ export class MaterialRatingDto {
   comentario?: string | null;
 
   @ApiProperty({
+    description: 'Nombre del usuario que realizó la calificación',
+    example: 'Juan Pérez',
+  })
+  usuarioNombre: string;
+
+  @ApiProperty({
     description: 'Fecha de creación de la calificación',
     example: '2025-12-02T10:30:00Z',
   })
