@@ -19,6 +19,9 @@ import { GetMaterialRatingsResponseDto, MaterialRatingDto } from './dto/get-mate
 import { UserMaterialsStatsDto } from './dto/user-materials-stats.dto';
 import { TopDownloadedMaterialsDto, TopViewedMaterialsDto } from './dto/top-materials.dto';
 import { UserTagsPercentageDto } from './dto/user-tags-percentage.dto';
+import { GlobalTagsPercentageDto } from './dto/global-tags-percentage.dto';
+import { UserAverageRatingDto } from './dto/user-average-rating.dto';
+import { UserTopMaterialsDto } from './dto/user-top-materials.dto';
 
 @Injectable()
 export class MaterialService {
@@ -454,6 +457,48 @@ export class MaterialService {
   }
 
   /**
+   * Obtiene la calificación promedio de todos los materiales de un usuario.
+   */
+  async getUserAverageRating(userId: string): Promise<any> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    // Obtener todos los materiales del usuario con sus calificaciones
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      include: {
+        Calificaciones: true,
+      },
+    });
+
+    // Obtener todas las calificaciones de todos los materiales del usuario
+    const todasLasCalificaciones = materiales.flatMap(
+      (m: any) => m.Calificaciones ?? [],
+    );
+
+    // Calcular el promedio
+    const calificacionPromedio =
+      todasLasCalificaciones.length > 0
+        ? todasLasCalificaciones.reduce(
+            (acc: number, c: any) => acc + c.calificacion,
+            0,
+          ) / todasLasCalificaciones.length
+        : null;
+
+    return {
+      userId,
+      calificacionPromedio,
+      totalCalificaciones: todasLasCalificaciones.length,
+      totalMateriales: materiales.length,
+    };
+  }
+
+  /**
    * Obtiene los materiales más populares en el sistema,
    * ordenados por descargas y, en segundo lugar, por vistas.
    */
@@ -629,6 +674,60 @@ export class MaterialService {
   }
 
   /**
+   * Obtiene todos los materiales de un usuario ordenados por popularidad (descargas DESC, vistos DESC)
+   * @param userId - ID del usuario
+   * @returns Array de materiales ordenados por popularidad con tags incluidos
+   */
+  async getUserTopMaterials(userId: string): Promise<any[]> {
+    // Validar que el usuario existe
+    const userExists = await this.prisma.usuarios.findUnique({
+      where: { id: userId },
+    });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario ${userId} no existe`);
+    }
+
+    // Obtener todos los materiales del usuario ordenados por descargas DESC, luego vistos DESC
+    const materiales = await this.prisma.materiales.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        nombre: true,
+        descargas: true,
+        vistos: true,
+        Calificaciones: true,
+        MaterialTags: {
+          include: {
+            Tags: true,
+          },
+        },
+      },
+      orderBy: [
+        { descargas: 'desc' },
+        { vistos: 'desc' },
+      ],
+    });
+
+    return materiales.map((m: any) => {
+      const calificacionPromedio =
+        m.Calificaciones && m.Calificaciones.length > 0
+          ? m.Calificaciones.reduce(
+              (acc: number, c: any) => acc + c.calificacion,
+              0,
+            ) / m.Calificaciones.length
+          : 0;
+      return {
+        id: m.id,
+        nombre: m.nombre,
+        descargas: m.descargas ?? 0,
+        vistos: m.vistos ?? 0,
+        calificacionPromedio,
+        tags: m.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
+      };
+    });
+  }
+
+  /**
    * Obtiene los tags utilizados por un usuario y su porcentaje de uso
    * @param userId - ID del usuario
    * @returns Objeto con userId y array de tags con sus porcentajes (suma = 100%)
@@ -676,6 +775,49 @@ export class MaterialService {
 
     return {
       userId,
+      tags: tagsWithPercentage,
+    };
+  }
+
+  /**
+   * Obtiene los porcentajes de tags en todos los materiales del sistema.
+   */
+  async getGlobalTagsPercentage(): Promise<any> {
+    // Obtener todos los materiales con sus tags
+    const materiales = await this.prisma.materiales.findMany({
+      include: {
+        MaterialTags: {
+          include: {
+            Tags: true,
+          },
+        },
+      },
+    });
+
+    // Contar ocurrencias de cada tag
+    const tagCount: { [key: string]: number } = {};
+    let totalAsociaciones = 0;
+
+    materiales.forEach((material: any) => {
+      material.MaterialTags.forEach((materialTag: any) => {
+        const tagName = materialTag.Tags.tag;
+        tagCount[tagName] = (tagCount[tagName] || 0) + 1;
+        totalAsociaciones++;
+      });
+    });
+
+    // Calcular porcentajes
+    const tagsWithPercentage = Object.entries(tagCount)
+      .map(([tag, count]) => ({
+        tag,
+        cantidad: count,
+        porcentaje: totalAsociaciones > 0 ? (count / totalAsociaciones) * 100 : 0,
+      }))
+      .sort((a, b) => b.porcentaje - a.porcentaje); // Ordenar por porcentaje descendente
+
+    return {
+      totalTags: Object.keys(tagCount).length,
+      totalAsociaciones,
       tags: tagsWithPercentage,
     };
   }
@@ -736,6 +878,34 @@ export class MaterialService {
   }
 
   /**
+   * Obtiene los materiales ordenados por fecha de creación
+   * @param order - 'asc' para más antiguos primero, 'desc' para más recientes primero (por defecto)
+   * @param skip - Número de registros a saltar (para paginación)
+   * @param take - Número de registros a obtener (para paginación)
+   * @returns Array de materiales ordenados por fecha
+   */
+  async getMaterialsByDate(
+    order: 'asc' | 'desc' = 'desc',
+    skip?: number,
+    take?: number,
+  ): Promise<MaterialDto[]> {
+    const materiales = await this.prisma.materiales.findMany({
+      orderBy: {
+        createdAt: order,
+      },
+      skip: skip ? Number(skip) : undefined,
+      take: take ? Number(take) : undefined,
+      include: {
+        MaterialTags: { include: { Tags: true } },
+        Calificaciones: true,
+        usuarios: { select: { nombre: true } },
+      },
+    });
+
+    return materiales.map((m: any) => this.toMaterialDto(m));
+  }
+
+  /**
    * Mapea el modelo de Prisma al DTO de salida para listas.
    */
   private toMaterialDto(material: any): MaterialDto {
@@ -747,6 +917,13 @@ export class MaterialService {
             0,
           ) / material.Calificaciones.length
         : undefined;
+
+    // Contar solo comentarios que no sean nulos ni vacíos
+    const totalComentarios = material.Calificaciones
+      ? material.Calificaciones.filter(
+          (c: any) => c.comentario && c.comentario.trim().length > 0,
+        ).length
+      : 0;
 
     return {
       id: material.id,
@@ -762,7 +939,7 @@ export class MaterialService {
       updatedAt: material.updatedAt,
       tags: material.MaterialTags?.map((mt: any) => mt.Tags?.tag) ?? [],
       calificacionPromedio: promedio,
-      totalComentarios: material.Calificaciones.length ?? 0,
+      totalComentarios,
     };
   }
 
@@ -802,6 +979,7 @@ export class MaterialService {
     await this.prisma.calificaciones.create({
       data: {
         idMaterial: materialId,
+        userId: userId,
         calificacion: rating,
         comentario: comentario ?? undefined,
       },
@@ -882,12 +1060,16 @@ export class MaterialService {
     const calificaciones = await this.prisma.calificaciones.findMany({
       where: { idMaterial: materialId },
       orderBy: { createdAt: 'desc' },
+      include: {
+        usuarios: { select: { nombre: true } },
+      },
     });
 
     return calificaciones.map((c: any) => ({
       id: c.id,
       calificacion: c.calificacion,
       comentario: c.comentario ?? null,
+      usuarioNombre: c.usuarios?.nombre ?? 'Usuario Anónimo',
       createdAt: c.createdAt,
     }));
   }
@@ -936,7 +1118,8 @@ export class MaterialService {
       const downloadResponse = await blockBlobClient.download();
       const stream = downloadResponse.readableStreamBody;
       const contentType = downloadResponse.contentType ?? 'application/pdf';
-      const filename = material.nombre || decodedBlobName.split('/').pop() || 'material.pdf';
+      // Usar el nombre del blob como nombre de descarga
+      const filename = decodedBlobName.split('/').pop() || 'material.pdf';
 
       if (!stream) {
         // Fallback a buffer si el SDK no entrega stream
