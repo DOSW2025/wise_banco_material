@@ -442,10 +442,10 @@ export class MaterialService {
 
     const calificacionPromedio =
       todasLasCalificaciones.length > 0
-        ? todasLasCalificaciones.reduce(
+        ? Math.round((todasLasCalificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / todasLasCalificaciones.length
+          ) / todasLasCalificaciones.length) * 10) / 10
         : null;
 
     return {
@@ -484,10 +484,10 @@ export class MaterialService {
     // Calcular el promedio
     const calificacionPromedio =
       todasLasCalificaciones.length > 0
-        ? todasLasCalificaciones.reduce(
+        ? Math.round((todasLasCalificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / todasLasCalificaciones.length
+          ) / todasLasCalificaciones.length) * 10) / 10
         : null;
 
     return {
@@ -560,10 +560,10 @@ export class MaterialService {
 
     const calificacionPromedio =
       todasLasCalificaciones.length > 0
-        ? todasLasCalificaciones.reduce(
+        ? Math.round((todasLasCalificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / todasLasCalificaciones.length
+          ) / todasLasCalificaciones.length) * 10) / 10
         : 0;
 
     return {
@@ -608,10 +608,10 @@ export class MaterialService {
       topDownloaded: materiales.map((m: any) => {
         const calificacionPromedio =
           m.Calificaciones && m.Calificaciones.length > 0
-            ? m.Calificaciones.reduce(
+            ? Math.round((m.Calificaciones.reduce(
                 (acc: number, c: any) => acc + c.calificacion,
                 0,
-              ) / m.Calificaciones.length
+              ) / m.Calificaciones.length) * 10) / 10
             : 0;
         return {
           id: m.id,
@@ -657,10 +657,10 @@ export class MaterialService {
       topViewed: materiales.map((m: any) => {
         const calificacionPromedio =
           m.Calificaciones && m.Calificaciones.length > 0
-            ? m.Calificaciones.reduce(
+            ? Math.round((m.Calificaciones.reduce(
                 (acc: number, c: any) => acc + c.calificacion,
                 0,
-              ) / m.Calificaciones.length
+              ) / m.Calificaciones.length) * 10) / 10
             : 0;
         return {
           id: m.id,
@@ -711,10 +711,10 @@ export class MaterialService {
     return materiales.map((m: any) => {
       const calificacionPromedio =
         m.Calificaciones && m.Calificaciones.length > 0
-          ? m.Calificaciones.reduce(
+          ? Math.round((m.Calificaciones.reduce(
               (acc: number, c: any) => acc + c.calificacion,
               0,
-            ) / m.Calificaciones.length
+            ) / m.Calificaciones.length) * 10) / 10
           : 0;
       return {
         id: m.id,
@@ -912,10 +912,10 @@ export class MaterialService {
     // calcular promedio usando la relación exacta devuelta por Prisma: Calificaciones
     const promedio =
       material.Calificaciones && material.Calificaciones.length > 0
-        ? material.Calificaciones.reduce(
+        ? Math.round((material.Calificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / material.Calificaciones.length
+          ) / material.Calificaciones.length) * 10) / 10
         : undefined;
 
     // Contar solo comentarios que no sean nulos ni vacíos
@@ -991,7 +991,7 @@ export class MaterialService {
       _count: { _all: true },
     });
 
-    const promedio = aggregate._avg.calificacion ?? 0;
+    const promedio = aggregate._avg.calificacion ? Math.round(aggregate._avg.calificacion * 10) / 10 : 0;
     const totalCalificaciones = aggregate._count._all;
 
     const response: RateMaterialResponseDto = {
@@ -1029,7 +1029,7 @@ export class MaterialService {
     const totalCalificaciones = calificaciones.length;
     const calificacionPromedio =
       totalCalificaciones > 0
-        ? calificaciones.reduce((acc: number, c: any) => acc + c.calificacion, 0) / totalCalificaciones
+        ? Math.round((calificaciones.reduce((acc: number, c: any) => acc + c.calificacion, 0) / totalCalificaciones) * 10) / 10
         : 0;
 
     return {
@@ -1283,10 +1283,10 @@ export class MaterialService {
     // Calcular calificación promedio
     const calificacionPromedio =
       material.Calificaciones && material.Calificaciones.length > 0
-        ? material.Calificaciones.reduce(
+        ? Math.round((material.Calificaciones.reduce(
             (acc: number, c: any) => acc + c.calificacion,
             0,
-          ) / material.Calificaciones.length
+          ) / material.Calificaciones.length) * 10) / 10
         : null;
     await this.incrementViews(materialId);
     return {
